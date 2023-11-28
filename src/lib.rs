@@ -99,7 +99,8 @@ impl eframe::App for App {
             debug!("running");
             self.flush_receive_channel(ctx);
             ui.label(self.barcode_input.iter().join("\n"));
-            let input_box = ui.text_edit_singleline(&mut self.text);
+            // let input_box = ui.add(egui::TextEdit::singleline(&mut self.text));
+            let input_box = ui.text_edit_singleline(&mut self.text).    ;
             input_box.request_focus();
             if input_box.ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.barcode_input.push(self.text.clone());
