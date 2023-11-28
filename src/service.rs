@@ -3,7 +3,6 @@ use eframe::egui;
 use log::debug;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    select,
     task::spawn_blocking,
     time::{interval, timeout, Duration},
 };
@@ -93,6 +92,7 @@ async fn read_line_timeout(handle: &mut BufWriter<BufReader<SerialStream>>) -> R
     }
 }
 
+#[tokio::main]
 pub async fn start_service(
     receive_channel: std::sync::mpsc::Receiver<Command>,
     send_channel: std::sync::mpsc::Sender<Reply>,
@@ -100,14 +100,15 @@ pub async fn start_service(
 ) {
     {
         let channel = send_channel.clone();
-        spawn_blocking(|| listen(channel, ctx));
+        let ctx = ctx.clone();
+        spawn_blocking(move || listen(channel, ctx));
     }
     let mut interval = interval(Duration::from_millis(10));
     let mut handle: Option<BufWriter<BufReader<SerialStream>>> = None;
 
     loop {
         interval.tick().await;
-        match receive_channel.try_recv() {
+        match receive_channel.recv() {
             Ok(Command::Connect) => {
                 handle = autoconnect().await;
                 if let Some(ref handle) = handle {
@@ -158,5 +159,6 @@ pub async fn start_service(
             }
             Err(_) => (),
         }
+        ctx.request_repaint();
     }
 }
