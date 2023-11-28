@@ -68,6 +68,7 @@ async fn try_connect(device: String) -> Option<BufWriter<BufReader<SerialStream>
 fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) {
     rdev::listen(move |event| match event.name {
         Some(s) => {
+            debug!("Keypressed: {s}");
             ctx.request_repaint();
             channel.send(Reply::Keypress(event.time, s)).unwrap();
         }
@@ -98,11 +99,11 @@ pub async fn start_service(
     send_channel: std::sync::mpsc::Sender<Reply>,
     ctx: egui::Context,
 ) {
-    {
-        let channel = send_channel.clone();
-        let ctx = ctx.clone();
-        spawn_blocking(move || listen(channel, ctx));
-    }
+    // {
+    //     let channel = send_channel.clone();
+    //     let ctx = ctx.clone();
+    //     spawn_blocking(move || listen(channel, ctx));
+    // }
     let mut interval = interval(Duration::from_millis(10));
     let mut handle: Option<BufWriter<BufReader<SerialStream>>> = None;
 

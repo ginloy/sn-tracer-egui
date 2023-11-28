@@ -11,6 +11,7 @@ mod service;
 
 pub struct App {
     barcode_input: Vec<String>,
+    text: String,
     device_output: Vec<String>,
     receive_channel: Receiver<Reply>,
     send_channel: Sender<Command>,
@@ -35,6 +36,7 @@ impl App {
         });
         Self {
             barcode_input: Vec::new(),
+            text: String::new(),
             device_output: Vec::new(),
             receive_channel: receive_channel_2,
             send_channel: send_channel_1,
@@ -96,7 +98,13 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             debug!("running");
             self.flush_receive_channel(ctx);
-            ui.label(self.barcode_input.iter().join("\n"))
+            ui.label(self.barcode_input.iter().join("\n"));
+            let input_box = ui.text_edit_singleline(&mut self.text);
+            input_box.request_focus();
+            if input_box.ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.barcode_input.push(self.text.clone());
+                self.text.clear();
+            }
         });
     }
 }
