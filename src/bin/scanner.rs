@@ -1,7 +1,7 @@
 use std::time::Instant;
 use log::{error, debug};
 
-const DELAY_MICROS: u128 = 4000;
+const DELAY_MICROS: u128 = 10000;
 
 fn main() {
     env_logger::Builder::from_default_env().init();
