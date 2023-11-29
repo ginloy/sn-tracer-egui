@@ -6,13 +6,24 @@ use egui::*;
 use egui_extras::*;
 use itertools::Itertools;
 use log::*;
+use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use service::{Command, Reply};
 use std::{
+    path::PathBuf,
     sync::mpsc::{Receiver, Sender},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 mod service;
+
+const HEADERS: [&str; 4] = [
+    "Barcode",
+    "Serial Number (DEC)",
+    "Serial Number (HEX)",
+    "Manufacture Date",
+];
+
+const DEFAULT_SAVE_FILE: &str = "record.csv";
 
 pub struct App {
     barcode_input: Vec<String>,
@@ -22,6 +33,8 @@ pub struct App {
     send_channel: Sender<Command>,
     keypress_buffer: Vec<(SystemTime, String)>,
     connection_status: ConnectionStatus,
+    download_path: Option<PathBuf>,
+    previous_connection_request: Instant,
 }
 
 enum ConnectionStatus {
@@ -55,6 +68,7 @@ impl App {
             let ctx = ctx.clone();
             move || service::start_service(receive_channel_1, send_channel_2, ctx.clone())
         });
+        send_channel_1.send(Command::Connect).expect("Thread died");
         Self {
             barcode_input: Vec::new(),
             text: String::new(),
@@ -63,12 +77,61 @@ impl App {
             send_channel: send_channel_1,
             keypress_buffer: Vec::new(),
             connection_status: ConnectionStatus::Disconnected,
+            download_path: None,
+            previous_connection_request: Instant::now(),
         }
     }
-    
+
     fn update_non_ui(&mut self) {
-        if let ConnectionStatus::Disconnected = self.connection_status {
-            self.send_channel.send(Command::Connect).expect("Thread died");
+        match &self.connection_status {
+            ConnectionStatus::Disconnected => {
+                if self.previous_connection_request.elapsed() > std::time::Duration::from_secs(2) {
+                    self.previous_connection_request = Instant::now();
+                    self.send_channel.send(Command::Connect).unwrap();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn show_download_error_dialog(&self, msg: &str) {
+        MessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title("Download failed")
+            .set_description(msg)
+            .set_buttons(MessageButtons::Ok)
+            .show();
+    }
+
+    fn get_download_path(&mut self) -> Option<PathBuf> {
+        let current_path = self
+            .download_path
+            .clone()
+            .or_else(|| dirs::download_dir().map(|p| p.join(DEFAULT_SAVE_FILE)))
+            .or_else(|| std::env::current_dir().ok())?;
+        let filename = current_path.file_name()?.to_str()?;
+        let dir = current_path.parent()?;
+        FileDialog::new()
+            .add_filter("CSV", &["csv"])
+            .set_directory(dir)
+            .set_file_name(filename)
+            .save_file()
+    }
+
+    fn start_download(&mut self) {
+        match self.get_download_path() {
+            None => self.show_download_error_dialog("Could not get suitable download path"),
+            Some(path) => {
+                self.download_path = Some(path.clone());
+                debug!("Path set to {:?}, starting download", self.download_path);
+                self.send_channel
+                    .send(Command::Download(
+                        self.download_path.as_ref().unwrap().to_owned(),
+                        self.barcode_input.clone(),
+                        self.device_output.clone(),
+                    ))
+                    .expect("Thread died");
+            }
         }
     }
 
@@ -118,6 +181,17 @@ impl App {
                 Reply::Disconnected => {
                     self.connection_status = ConnectionStatus::Disconnected;
                 }
+                Reply::WriteError(s) => {
+                    debug!("Write error: {}", s);
+                }
+                Reply::ReadError(s) => {
+                    debug!("Read error: {}", s);
+                    self.device_output.push(s.trim().into());
+                }
+                Reply::DownloadError(e) => {
+                    debug!("Download error: {}", e);
+                    self.show_download_error_dialog(&e);
+                }
             }
         }
     }
@@ -126,6 +200,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.update_non_ui();
+        self.flush_receive_channel(ctx);
         egui::TopBottomPanel::bottom("bottom_panel")
             .exact_height(40.0)
             .show(ctx, |ui| {
@@ -152,44 +227,54 @@ impl eframe::App for App {
                         }))
                         .clicked()
                     {
-                        todo!();
+                        self.start_download();
                     }
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.flush_receive_channel(ctx);
             ui.heading(match &self.connection_status {
                 ConnectionStatus::Connected(d) => format!("Connected to {}", d),
                 ConnectionStatus::Connecting => "Attempting Connection...".to_string(),
                 ConnectionStatus::Disconnected => "Disconnected".to_string(),
             });
             ui.add_space(20.0);
+            let width = ui.available_width();
             TableBuilder::new(ui)
                 .stick_to_bottom(true)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(Layout::left_to_right(Align::Center))
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .min_scrolled_height(0.0)
+                .columns(Column::initial(width / 4.2).clip(true).at_least(50.0), 3)
+                .column(Column::remainder().at_least(50.0))
+                // .min_scrolled_height(0.0)
                 .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("Barcode");
-                    });
-                    header.col(|ui| {
-                        ui.strong("Serial Number");
-                    });
+                    for header_name in HEADERS.into_iter() {
+                        header.col(|ui| {
+                            ui.strong(header_name);
+                        });
+                    }
                 })
                 .body(|mut body| {
-                    body.row(30.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label("Hello");
-                        });
-                        row.col(|ui| {
-                            ui.label("World");
-                        });
-                    })
+                    body.rows(
+                        ctx.fonts(|f| f.row_height(&TextStyle::Body.resolve(&ctx.style()))),
+                        self.barcode_input.len(),
+                        |i, mut row| {
+                            row.col(|ui| {
+                                ui.add(Label::new(&self.barcode_input[i]).wrap(true));
+                            });
+                            let mut cols = self
+                                .device_output
+                                .get(i)
+                                .map(|s| s.as_str())
+                                .unwrap_or("")
+                                .split(",");
+                            for _ in 0..HEADERS.len() - 1 {
+                                row.col(|ui| {
+                                    ui.label(cols.next().unwrap_or("-"));
+                                });
+                            }
+                        },
+                    )
                 });
         });
     }

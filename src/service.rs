@@ -1,8 +1,9 @@
-use std::sync::mpsc::Sender;
+use std::{path::PathBuf, sync::mpsc::Sender};
 
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
-use log::debug;
+use itertools::Itertools;
+use log::{debug, trace};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     task::spawn_blocking,
@@ -10,20 +11,26 @@ use tokio::{
 };
 use tokio_serial::{SerialPort, SerialStream};
 
+use crate::HEADERS;
+
 const ERROR: &str = "Channel closed";
 const TIMEOUT_MS: u64 = 500;
 pub enum Command {
     Connect,
     Write(String),
     Read,
+    Download(PathBuf, Vec<String>, Vec<String>),
 }
 
 pub enum Reply {
     Connected(String),
     Connecting,
     Read(String),
+    ReadError(String),
+    WriteError(String),
     Keypress(std::time::SystemTime, String),
     Disconnected,
+    DownloadError(String),
 }
 
 fn get_available_devices() -> Vec<String> {
@@ -84,6 +91,14 @@ fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) {
     .unwrap();
 }
 
+async fn refresh_ui(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) {
+    let mut interval = interval(Duration::from_secs(2));
+    loop {
+        interval.tick().await;
+        ctx.request_repaint();
+    }
+}
+
 async fn read_line_timeout(handle: &mut BufWriter<BufReader<SerialStream>>) -> Result<String> {
     let mut buf = String::new();
     match timeout(
@@ -111,6 +126,11 @@ pub async fn start_service(
     //     let ctx = ctx.clone();
     //     spawn_blocking(move || listen(channel, ctx));
     // }
+    tokio::spawn({
+        let channel = send_channel.clone();
+        let ctx = ctx.clone();
+        async move { refresh_ui(channel, ctx).await }
+    });
     let mut interval = interval(Duration::from_millis(10));
     let mut handle: Option<BufWriter<BufReader<SerialStream>>> = None;
 
@@ -118,6 +138,7 @@ pub async fn start_service(
         interval.tick().await;
         match receive_channel.recv() {
             Ok(Command::Connect) => {
+                debug!("Connection request");
                 handle = autoconnect(&send_channel).await;
                 if let Some(ref handle) = handle {
                     send_channel
@@ -132,12 +153,13 @@ pub async fn start_service(
             Ok(Command::Write(s)) => {
                 handle = match handle {
                     None => {
+                        send_channel.send(Reply::WriteError("Not connected".into()));
                         send_channel.send(Reply::Disconnected).expect(ERROR);
                         None
                     }
                     Some(mut handle) => match handle.write_all(s.as_bytes()).await {
                         Err(e) => {
-                            debug!("{:?}", e);
+                            send_channel.send(Reply::WriteError(format!("{:?}", e)));
                             send_channel.send(Reply::Disconnected).expect(ERROR);
                             None
                         }
@@ -148,6 +170,9 @@ pub async fn start_service(
             Ok(Command::Read) => {
                 handle = match handle {
                     None => {
+                        send_channel
+                            .send(Reply::ReadError("Not connected".into()))
+                            .expect(ERROR);
                         send_channel.send(Reply::Disconnected).expect(ERROR);
                         None
                     }
@@ -155,7 +180,9 @@ pub async fn start_service(
                         let result = read_line_timeout(&mut handle).await.context("Read error");
                         match result {
                             Err(e) => {
-                                debug!("{:?}", e);
+                                send_channel
+                                    .send(Reply::ReadError(format!("{:?}", e)))
+                                    .expect(ERROR);
                                 send_channel.send(Reply::Disconnected).expect(ERROR);
                                 None
                             }
@@ -165,6 +192,30 @@ pub async fn start_service(
                             }
                         }
                     }
+                }
+            }
+            Ok(Command::Download(path, barcode, device)) => {
+                debug!("Download to {:?}", path);
+                let mut data = HEADERS.join(",");
+                data.push('\n');
+                let rows = barcode.len().max(device.len());
+                data.push_str(
+                    &(0..rows)
+                        .map(|i| {
+                            format!(
+                                "{},{}",
+                                barcode.get(i).unwrap_or(&"".to_string()),
+                                device.get(i).unwrap_or(&"".to_string())
+                            )
+                        })
+                        .join("\n"),
+                );
+                if let Err(e) = std::fs::write(path, data.as_bytes()) {
+                    send_channel
+                        .send(Reply::DownloadError(
+                            format!("Download failed: {:?}", e).into(),
+                        ))
+                        .expect(ERROR);
                 }
             }
             Err(_) => (),
