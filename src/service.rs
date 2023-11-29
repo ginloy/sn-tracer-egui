@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::mpsc::Sender};
+use std::{path::PathBuf, sync::mpsc::Sender, process::{Stdio, self}, io::BufRead};
 
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
@@ -31,6 +31,7 @@ pub enum Reply {
     Keypress(std::time::SystemTime, String),
     Disconnected,
     DownloadError(String),
+    BarcodeOutput(String)
 }
 
 fn get_available_devices() -> Vec<String> {
@@ -79,19 +80,23 @@ async fn try_connect(device: String) -> Option<BufWriter<BufReader<SerialStream>
     None
 }
 
-fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) {
-    rdev::listen(move |event| match event.name {
-        Some(s) => {
-            debug!("Keypressed: {s}");
-            ctx.request_repaint();
-            channel.send(Reply::Keypress(event.time, s)).unwrap();
-        }
-        None => {}
-    })
-    .unwrap();
+fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) -> Result<()> {
+    let mut scanner = process::Command::new("./target/release/scanner")
+    .stdout(Stdio::piped())
+    .spawn()?;
+    let output = scanner.stdout.take().context("Failed to get stdout of scanner")?;
+    let mut output = std::io::BufReader::new(output);
+
+    let mut buf = String::new();
+    loop {
+        output.read_line(&mut buf)?;
+        channel.send(Reply::BarcodeOutput(buf.trim().to_string()))?;
+        ctx.request_repaint();
+        buf.clear();
+    }
 }
 
-async fn refresh_ui(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) {
+async fn refresh_ui(ctx: egui::Context) {
     let mut interval = interval(Duration::from_secs(2));
     loop {
         interval.tick().await;
@@ -126,10 +131,14 @@ pub async fn start_service(
     //     let ctx = ctx.clone();
     //     spawn_blocking(move || listen(channel, ctx));
     // }
-    tokio::spawn({
+    tokio::task::spawn_blocking({
         let channel = send_channel.clone();
         let ctx = ctx.clone();
-        async move { refresh_ui(channel, ctx).await }
+        move || listen(channel, ctx)
+    });
+    tokio::spawn({
+        let ctx = ctx.clone();
+        async move { refresh_ui(ctx).await }
     });
     let mut interval = interval(Duration::from_millis(10));
     let mut handle: Option<BufWriter<BufReader<SerialStream>>> = None;

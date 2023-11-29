@@ -120,7 +120,7 @@ impl App {
 
     fn start_download(&mut self) {
         match self.get_download_path() {
-            None => self.show_download_error_dialog("Could not get suitable download path"),
+            None => {},
             Some(path) => {
                 self.download_path = Some(path.clone());
                 debug!("Path set to {:?}, starting download", self.download_path);
@@ -192,6 +192,11 @@ impl App {
                     debug!("Download error: {}", e);
                     self.show_download_error_dialog(&e);
                 }
+                Reply::BarcodeOutput(s) => {
+                    self.barcode_input.push(s);
+                    self.send_channel.send(Command::Write("read\n".to_string())).expect("Thread died");
+                    self.send_channel.send(Command::Read).expect("Thread died");
+                }
             }
         }
     }
@@ -237,20 +242,22 @@ impl eframe::App for App {
                 ConnectionStatus::Connecting => "Attempting Connection...".to_string(),
                 ConnectionStatus::Disconnected => "Disconnected".to_string(),
             });
-            ui.add_space(20.0);
+            ui.separator();
+            ScrollArea::horizontal().show(ui, |ui| {
             let width = ui.available_width();
             TableBuilder::new(ui)
                 .stick_to_bottom(true)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(Layout::left_to_right(Align::Center))
-                .columns(Column::initial(width / 4.2).clip(true).at_least(50.0), 3)
-                .column(Column::remainder().at_least(50.0))
+                .cell_layout(Layout::top_down(Align::LEFT))
+                .columns(Column::initial(width / 4.2).clip(true).at_least(width / HEADERS.len() as f32 / 2.0), 3)
+                .column(Column::remainder().at_least(width / HEADERS.len() as f32 / 2.0).clip(true))
                 // .min_scrolled_height(0.0)
                 .header(20.0, |mut header| {
                     for header_name in HEADERS.into_iter() {
                         header.col(|ui| {
-                            ui.strong(header_name);
+                            ui.add(Label::new(header_name).wrap(false));
                         });
                     }
                 })
@@ -260,7 +267,7 @@ impl eframe::App for App {
                         self.barcode_input.len(),
                         |i, mut row| {
                             row.col(|ui| {
-                                ui.add(Label::new(&self.barcode_input[i]).wrap(true));
+                                ui.add(Label::new(&self.barcode_input[i]).wrap(false));
                             });
                             let mut cols = self
                                 .device_output
@@ -276,6 +283,7 @@ impl eframe::App for App {
                         },
                     )
                 });
+            })
         });
     }
 }
