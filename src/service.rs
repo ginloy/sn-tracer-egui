@@ -1,3 +1,5 @@
+use std::sync::mpsc::Sender;
+
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use log::debug;
@@ -18,6 +20,7 @@ pub enum Command {
 
 pub enum Reply {
     Connected(String),
+    Connecting,
     Read(String),
     Keypress(std::time::SystemTime, String),
     Disconnected,
@@ -29,6 +32,7 @@ fn get_available_devices() -> Vec<String> {
         .into_iter()
         .filter(|d| {
             if let tokio_serial::SerialPortType::UsbPort(ref info) = d.port_type {
+                debug!("Detected: {}, {:?}", d.port_name, info);
                 return info.manufacturer.as_ref().map(|s| s.as_str()).unwrap_or("")
                     == "Arduino (www.arduino.cc)";
             }
@@ -38,8 +42,11 @@ fn get_available_devices() -> Vec<String> {
         .collect()
 }
 
-async fn autoconnect() -> Option<BufWriter<BufReader<SerialStream>>> {
+async fn autoconnect(send_channel: &Sender<Reply>) -> Option<BufWriter<BufReader<SerialStream>>> {
     let devices = get_available_devices();
+    if !devices.is_empty() {
+        send_channel.send(Reply::Connecting).expect(ERROR);
+    }
     let mut futures = tokio::task::JoinSet::new();
     devices.into_iter().for_each(|d| {
         futures.spawn(try_connect(d));
@@ -111,13 +118,15 @@ pub async fn start_service(
         interval.tick().await;
         match receive_channel.recv() {
             Ok(Command::Connect) => {
-                handle = autoconnect().await;
+                handle = autoconnect(&send_channel).await;
                 if let Some(ref handle) = handle {
                     send_channel
                         .send(Reply::Connected(
                             handle.get_ref().get_ref().name().unwrap_or("".to_string()),
                         ))
                         .expect(ERROR);
+                } else {
+                    send_channel.send(Reply::Disconnected).expect(ERROR);
                 }
             }
             Ok(Command::Write(s)) => {
