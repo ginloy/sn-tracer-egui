@@ -1,17 +1,15 @@
 use std::{
-    io::BufRead,
     path::PathBuf,
-    process::{self, Stdio},
+    process::Stdio,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use eframe::egui;
 use itertools::Itertools;
-use log::{debug, trace};
+use log::*;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
-    task::spawn_blocking,
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    sync::mpsc::UnboundedSender,
     time::{interval, timeout, Duration},
 };
 use tokio_serial::{SerialPort, SerialStream};

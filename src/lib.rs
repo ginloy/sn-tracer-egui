@@ -1,6 +1,6 @@
 use eframe::{
     egui,
-    epaint::{FontFamily, Vec2},
+    // epaint::FontFamily,
 };
 use egui::*;
 use egui_extras::*;
@@ -55,21 +55,21 @@ impl Drop for App {
 }
 
 impl App {
-    fn configure_text_styles(ctx: &egui::Context) {
-        use FontFamily::Proportional;
-        use TextStyle::*;
+    // fn configure_text_styles(ctx: &egui::Context) {
+    //     use FontFamily::Proportional;
+    //     use TextStyle::*;
 
-        let mut style = (*ctx.style()).clone();
-        style.text_styles = [
-            (Heading, FontId::new(30.0, Proportional)),
-            (Body, FontId::new(18.0, Proportional)),
-            (Monospace, FontId::new(14.0, Proportional)),
-            (Button, FontId::new(14.0, Proportional)),
-            (Small, FontId::new(10.0, Proportional)),
-        ]
-        .into();
-        ctx.set_style(style);
-    }
+    //     let mut style = (*ctx.style()).clone();
+    //     style.text_styles = [
+    //         (Heading, FontId::new(30.0, Proportional)),
+    //         (Body, FontId::new(18.0, Proportional)),
+    //         (Monospace, FontId::new(14.0, Proportional)),
+    //         (Button, FontId::new(14.0, Proportional)),
+    //         (Small, FontId::new(10.0, Proportional)),
+    //     ]
+    //     .into();
+    //     ctx.set_style(style);
+    // }
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Self::configure_text_styles(&cc.egui_ctx);
         let (send_channel_1, receive_channel_1) = tokio::sync::mpsc::unbounded_channel();
@@ -175,7 +175,7 @@ impl App {
         }
     }
 
-    fn flush_receive_channel(&mut self, ctx: &egui::Context) {
+    fn flush_receive_channel(&mut self, _ctx: &egui::Context) {
         while let Ok(event) = self.receive_channel.try_recv() {
             match event {
                 Reply::Keypress(e, s) => {
@@ -217,7 +217,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_non_ui();
         self.flush_receive_channel(ctx);
         egui::TopBottomPanel::top("top_panel")
