@@ -4,15 +4,14 @@ use eframe::{
 };
 use egui::*;
 use egui_extras::*;
-use itertools::Itertools;
 use log::*;
-use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use rfd::*;
 use service::{Command, Reply};
 use std::{
     path::PathBuf,
-    sync::mpsc::{Receiver, Sender},
     time::{Instant, SystemTime},
 };
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 mod service;
 
@@ -29,13 +28,13 @@ pub struct App {
     barcode_input: Vec<String>,
     text: String,
     device_output: Vec<String>,
-    receive_channel: Receiver<Reply>,
-    send_channel: Sender<Command>,
+    receive_channel: UnboundedReceiver<Reply>,
+    send_channel: UnboundedSender<Command>,
     keypress_buffer: Vec<(SystemTime, String)>,
     connection_status: ConnectionStatus,
     download_path: Option<PathBuf>,
     previous_connection_request: Instant,
-    service_handle: Option<std::thread::JoinHandle<()>>
+    service_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 enum ConnectionStatus {
@@ -46,8 +45,12 @@ enum ConnectionStatus {
 
 impl Drop for App {
     fn drop(&mut self) {
-        self.send_channel.send(Command::Terminate).expect("Thread died");
-        self.service_handle.take().map(|h| h.join().expect("Thread died"));
+        self.send_channel
+            .send(Command::Terminate)
+            .expect("Thread died");
+        self.service_handle
+            .take()
+            .map(|h| h.join().expect("Thread died"));
     }
 }
 
@@ -69,8 +72,8 @@ impl App {
     }
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Self::configure_text_styles(&cc.egui_ctx);
-        let (send_channel_1, receive_channel_1) = std::sync::mpsc::channel();
-        let (send_channel_2, receive_channel_2) = std::sync::mpsc::channel();
+        let (send_channel_1, receive_channel_1) = tokio::sync::mpsc::unbounded_channel();
+        let (send_channel_2, receive_channel_2) = tokio::sync::mpsc::unbounded_channel();
         let ctx = cc.egui_ctx.clone();
         let service_handle = std::thread::spawn({
             let ctx = ctx.clone();
@@ -87,7 +90,7 @@ impl App {
             connection_status: ConnectionStatus::Disconnected,
             download_path: None,
             previous_connection_request: Instant::now(),
-            service_handle: Some(service_handle)
+            service_handle: Some(service_handle),
         }
     }
 
@@ -129,7 +132,7 @@ impl App {
 
     fn start_download(&mut self) {
         match self.get_download_path() {
-            None => {},
+            None => {}
             Some(path) => {
                 self.download_path = Some(path.clone());
                 debug!("Path set to {:?}, starting download", self.download_path);
@@ -203,7 +206,9 @@ impl App {
                 }
                 Reply::BarcodeOutput(s) => {
                     self.barcode_input.push(s);
-                    self.send_channel.send(Command::Write("read\n".to_string())).expect("Thread died");
+                    self.send_channel
+                        .send(Command::Write("read\n".to_string()))
+                        .expect("Thread died");
                     self.send_channel.send(Command::Read).expect("Thread died");
                 }
             }
@@ -215,13 +220,37 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.update_non_ui();
         self.flush_receive_channel(ctx);
+        egui::TopBottomPanel::top("top_panel")
+            .exact_height(50.0)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.heading(match &self.connection_status {
+                        ConnectionStatus::Connected(d) => format!("Connected to {}", d),
+                        ConnectionStatus::Connecting => "Attempting Connection...".to_string(),
+                        ConnectionStatus::Disconnected => "Disconnected".to_string(),
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let clear_button =
+                            Button::new(RichText::new("Clear").heading()).fill(Color32::RED);
+                        if ui.add(clear_button).clicked() {
+                            self.barcode_input.clear();
+                            self.device_output.clear();
+                        };
+                        let download_bytton =
+                            Button::new(RichText::new("Download").heading()).rounding(5.0);
+                        if ui.add(download_bytton).clicked() {
+                            self.start_download();
+                        };
+                    });
+                });
+            });
         egui::TopBottomPanel::bottom("bottom_panel")
             .exact_height(40.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     let input_box = ui.add(
                         egui::TextEdit::singleline(&mut self.text)
-                            .desired_width(ui.available_width() - 80.0),
+                            .desired_width(ui.available_width()),
                     );
                     input_box.request_focus();
                     if input_box.ctx.input(|i| i.key_pressed(egui::Key::Enter))
@@ -234,64 +263,63 @@ impl eframe::App for App {
                         self.send_channel.send(Command::Read).expect("Thread died");
                         self.text.clear();
                     }
-                    if ui
-                        .add(egui::Button::new("Download").min_size(Vec2 {
-                            x: ui.available_width(),
-                            y: input_box.rect.height(),
-                        }))
-                        .clicked()
-                    {
-                        self.start_download();
-                    }
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(match &self.connection_status {
-                ConnectionStatus::Connected(d) => format!("Connected to {}", d),
-                ConnectionStatus::Connecting => "Attempting Connection...".to_string(),
-                ConnectionStatus::Disconnected => "Disconnected".to_string(),
-            });
-            ui.separator();
-            ScrollArea::horizontal().show(ui, |ui| {
-            let width = ui.available_width();
-            TableBuilder::new(ui)
-                .stick_to_bottom(true)
-                .striped(true)
-                .resizable(true)
-                .cell_layout(Layout::left_to_right(Align::Center))
-                .cell_layout(Layout::top_down(Align::LEFT))
-                .columns(Column::initial(width / 4.2).clip(true).at_least(width / HEADERS.len() as f32 / 2.0), 3)
-                .column(Column::remainder().at_least(width / HEADERS.len() as f32 / 2.0).clip(true))
-                // .min_scrolled_height(0.0)
-                .header(20.0, |mut header| {
-                    for header_name in HEADERS.into_iter() {
-                        header.col(|ui| {
-                            ui.add(Label::new(header_name).wrap(false));
-                        });
-                    }
-                })
-                .body(|mut body| {
-                    body.rows(
-                        ctx.fonts(|f| f.row_height(&TextStyle::Body.resolve(&ctx.style()))),
-                        self.barcode_input.len(),
-                        |i, mut row| {
-                            row.col(|ui| {
-                                ui.add(Label::new(&self.barcode_input[i]).wrap(false));
-                            });
-                            let mut cols = self
-                                .device_output
-                                .get(i)
-                                .map(|s| s.as_str())
-                                .unwrap_or("")
-                                .split(",");
-                            for _ in 0..HEADERS.len() - 1 {
-                                row.col(|ui| {
-                                    ui.label(cols.next().unwrap_or("-"));
+            ScrollArea::horizontal().auto_shrink(false).show(ui, |ui| {
+                let width = ui.available_width();
+                TableBuilder::new(ui)
+                    .stick_to_bottom(true)
+                    .striped(true)
+                    .resizable(true)
+                    .cell_layout(Layout::left_to_right(Align::Center))
+                    .cell_layout(Layout::top_down(Align::LEFT))
+                    .columns(
+                        Column::initial(width / 4.2)
+                            .clip(true)
+                            .at_least(width / HEADERS.len() as f32 / 2.0),
+                        3,
+                    )
+                    .column(
+                        Column::remainder()
+                            .at_least(width / HEADERS.len() as f32 / 2.0)
+                            .clip(true),
+                    )
+                    // .min_scrolled_height(0.0)
+                    .header(
+                        ctx.fonts(|f| f.row_height(&TextStyle::Heading.resolve(&ctx.style()))),
+                        |mut header| {
+                            for header_name in HEADERS.into_iter() {
+                                header.col(|ui| {
+                                    ui.add(
+                                        Label::new(RichText::new(header_name).strong()).wrap(false),
+                                    );
                                 });
                             }
                         },
                     )
-                });
+                    .body(|body| {
+                        body.rows(
+                            ctx.fonts(|f| f.row_height(&TextStyle::Body.resolve(&ctx.style()))),
+                            self.barcode_input.len(),
+                            |i, mut row| {
+                                row.col(|ui| {
+                                    ui.add(Label::new(&self.barcode_input[i]).wrap(false));
+                                });
+                                let mut cols = self
+                                    .device_output
+                                    .get(i)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("")
+                                    .split(",");
+                                for _ in 0..HEADERS.len() - 1 {
+                                    row.col(|ui| {
+                                        ui.label(cols.next().unwrap_or("-"));
+                                    });
+                                }
+                            },
+                        )
+                    });
             })
         });
     }

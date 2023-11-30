@@ -2,15 +2,15 @@ use std::{
     io::BufRead,
     path::PathBuf,
     process::{self, Stdio},
-    sync::mpsc::Sender, env,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use eframe::egui;
 use itertools::Itertools;
 use log::{debug, trace};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::spawn_blocking,
     time::{interval, timeout, Duration},
 };
@@ -55,7 +55,7 @@ fn get_available_devices() -> Vec<String> {
         .collect()
 }
 
-async fn autoconnect(send_channel: &Sender<Reply>) -> Option<BufWriter<BufReader<SerialStream>>> {
+async fn autoconnect(send_channel: &UnboundedSender<Reply>) -> Result<BufReader<SerialStream>> {
     let devices = get_available_devices();
     if !devices.is_empty() {
         send_channel.send(Reply::Connecting).expect(ERROR);
@@ -65,36 +65,37 @@ async fn autoconnect(send_channel: &Sender<Reply>) -> Option<BufWriter<BufReader
         futures.spawn(try_connect(d));
     });
     debug!("Connection attempts: {}", futures.len());
+    let mut results = Vec::new();
     while let Some(Ok(res)) = futures.join_next().await {
-        match res {
-            Some(handle) => {
-                return Some(handle);
-            }
-            None => (),
-        }
+        results.push(res);
     }
-    None
+    results
+        .into_iter()
+        .find_map(Result::ok)
+        .context("Failed to connect to available devices")
 }
 
-async fn try_connect(device: String) -> Option<BufWriter<BufReader<SerialStream>>> {
-    let handle = SerialStream::open(&tokio_serial::new(&device, 9600)).ok()?;
-    let mut handle = BufWriter::new(BufReader::new(handle));
+async fn try_connect(device: String) -> Result<BufReader<SerialStream>> {
+    let handle = SerialStream::open(&tokio_serial::new(&device, 9600))?;
+    let mut handle = BufReader::new(handle);
     debug!("Handle obtained: {:?}", handle);
     tokio::time::sleep(Duration::from_millis(TIMEOUT_MS)).await;
     for _ in 0..5 {
-        handle.write_all("connect\n".as_bytes()).await.ok()?;
-        handle.flush().await.ok()?;
-        let reply = read_line_timeout(&mut handle).await.ok()?;
+        handle.write_all("connect\n".as_bytes()).await?;
+        let reply = read_line_timeout(&mut handle).await?;
         debug!("Reply: {}", reply);
         if reply.trim() == "connected" {
-            return Some(handle);
+            return Ok(handle);
         }
     }
-    None
+    bail!("Could not establish handshake with {:?}", handle)
 }
 
-async fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) -> Result<()> {
-    let scanner_path = env::var("SCANNER_PATH")?;
+async fn listen(
+    channel: tokio::sync::mpsc::UnboundedSender<Reply>,
+    ctx: egui::Context,
+) -> Result<()> {
+    let scanner_path = std::env::var("SCANNER_PATH")?;
     let mut scanner = tokio::process::Command::new(scanner_path)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
@@ -122,7 +123,7 @@ async fn refresh_ui(ctx: egui::Context) {
     }
 }
 
-async fn read_line_timeout(handle: &mut BufWriter<BufReader<SerialStream>>) -> Result<String> {
+async fn read_line_timeout(handle: &mut BufReader<SerialStream>) -> Result<String> {
     let mut buf = String::new();
     match timeout(
         Duration::from_millis(TIMEOUT_MS),
@@ -143,8 +144,8 @@ async fn read_line_timeout(handle: &mut BufWriter<BufReader<SerialStream>>) -> R
 
 #[tokio::main]
 pub async fn start_service(
-    receive_channel: std::sync::mpsc::Receiver<Command>,
-    send_channel: std::sync::mpsc::Sender<Reply>,
+    mut receive_channel: tokio::sync::mpsc::UnboundedReceiver<Command>,
+    send_channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) {
     // {
@@ -165,28 +166,29 @@ pub async fn start_service(
         let ctx = ctx.clone();
         async move { refresh_ui(ctx).await }
     });
-    let mut interval = interval(Duration::from_millis(10));
-    let mut handle: Option<BufWriter<BufReader<SerialStream>>> = None;
+    let mut handle: Option<BufReader<SerialStream>> = None;
 
     loop {
-        interval.tick().await;
-        match receive_channel.recv() {
-            Ok(Command::Connect) => {
+        match receive_channel.recv().await {
+            Some(Command::Connect) => {
                 debug!("Connection request");
-                handle = autoconnect(&send_channel).await;
-                if let Some(ref handle) = handle {
-                    debug!("Connected");
-                    send_channel
-                        .send(Reply::Connected(
-                            handle.get_ref().get_ref().name().unwrap_or("".to_string()),
-                        ))
-                        .expect(ERROR);
-                } else {
-                    debug!("Failed to connect");
-                    send_channel.send(Reply::Disconnected).expect(ERROR);
-                }
+                handle = match autoconnect(&send_channel).await {
+                    Ok(handle) => {
+                        send_channel
+                            .send(Reply::Connected(
+                                handle.get_ref().name().unwrap_or("Unknown port".into()),
+                            ))
+                            .expect(ERROR);
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        debug!("Connection error: {:?}", e);
+                        send_channel.send(Reply::Disconnected).expect(ERROR);
+                        None
+                    }
+                };
             }
-            Ok(Command::Write(s)) => {
+            Some(Command::Write(s)) => {
                 handle = match handle {
                     None => {
                         send_channel.send(Reply::WriteError("Not connected".into()));
@@ -206,7 +208,7 @@ pub async fn start_service(
                     },
                 }
             }
-            Ok(Command::Read) => {
+            Some(Command::Read) => {
                 handle = match handle {
                     None => {
                         send_channel
@@ -233,7 +235,7 @@ pub async fn start_service(
                     }
                 }
             }
-            Ok(Command::Download(path, barcode, device)) => {
+            Some(Command::Download(path, barcode, device)) => {
                 debug!("Download to {:?}", path);
                 let mut data = HEADERS.join(",");
                 data.push('\n');
@@ -257,10 +259,10 @@ pub async fn start_service(
                         .expect(ERROR);
                 }
             }
-            Ok(Command::Terminate) => {
+            Some(Command::Terminate) => {
                 break;
             }
-            Err(_) => (),
+            None => break,
         }
         ctx.request_repaint();
     }
