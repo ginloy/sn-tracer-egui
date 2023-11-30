@@ -1,4 +1,9 @@
-use std::{path::PathBuf, sync::mpsc::Sender, process::{Stdio, self}, io::BufRead};
+use std::{
+    io::BufRead,
+    path::PathBuf,
+    process::{self, Stdio},
+    sync::mpsc::Sender, env,
+};
 
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
@@ -14,12 +19,13 @@ use tokio_serial::{SerialPort, SerialStream};
 use crate::HEADERS;
 
 const ERROR: &str = "Channel closed";
-const TIMEOUT_MS: u64 = 500;
+const TIMEOUT_MS: u64 = 2000;
 pub enum Command {
     Connect,
     Write(String),
     Read,
     Download(PathBuf, Vec<String>, Vec<String>),
+    Terminate,
 }
 
 pub enum Reply {
@@ -31,7 +37,7 @@ pub enum Reply {
     Keypress(std::time::SystemTime, String),
     Disconnected,
     DownloadError(String),
-    BarcodeOutput(String)
+    BarcodeOutput(String),
 }
 
 fn get_available_devices() -> Vec<String> {
@@ -41,8 +47,7 @@ fn get_available_devices() -> Vec<String> {
         .filter(|d| {
             if let tokio_serial::SerialPortType::UsbPort(ref info) = d.port_type {
                 debug!("Detected: {}, {:?}", d.port_name, info);
-                return info.manufacturer.as_ref().map(|s| s.as_str()).unwrap_or("")
-                    == "Arduino (www.arduino.cc)";
+                return info.pid == 24577;
             }
             false
         })
@@ -59,20 +64,28 @@ async fn autoconnect(send_channel: &Sender<Reply>) -> Option<BufWriter<BufReader
     devices.into_iter().for_each(|d| {
         futures.spawn(try_connect(d));
     });
-    futures
-        .join_next()
-        .await
-        .map(|r| r.ok())
-        .flatten()
-        .flatten()
+    debug!("Connection attempts: {}", futures.len());
+    while let Some(Ok(res)) = futures.join_next().await {
+        match res {
+            Some(handle) => {
+                return Some(handle);
+            }
+            None => (),
+        }
+    }
+    None
 }
 
 async fn try_connect(device: String) -> Option<BufWriter<BufReader<SerialStream>>> {
     let handle = SerialStream::open(&tokio_serial::new(&device, 9600)).ok()?;
     let mut handle = BufWriter::new(BufReader::new(handle));
+    debug!("Handle obtained: {:?}", handle);
+    tokio::time::sleep(Duration::from_millis(TIMEOUT_MS)).await;
     for _ in 0..5 {
         handle.write_all("connect\n".as_bytes()).await.ok()?;
+        handle.flush().await.ok()?;
         let reply = read_line_timeout(&mut handle).await.ok()?;
+        debug!("Reply: {}", reply);
         if reply.trim() == "connected" {
             return Some(handle);
         }
@@ -80,16 +93,21 @@ async fn try_connect(device: String) -> Option<BufWriter<BufReader<SerialStream>
     None
 }
 
-fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) -> Result<()> {
-    let mut scanner = process::Command::new("./target/release/scanner")
-    .stdout(Stdio::piped())
-    .spawn()?;
-    let output = scanner.stdout.take().context("Failed to get stdout of scanner")?;
-    let mut output = std::io::BufReader::new(output);
+async fn listen(channel: std::sync::mpsc::Sender<Reply>, ctx: egui::Context) -> Result<()> {
+    let scanner_path = env::var("SCANNER_PATH")?;
+    let mut scanner = tokio::process::Command::new(scanner_path)
+        .kill_on_drop(true)
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let output = scanner
+        .stdout
+        .take()
+        .context("Failed to get stdout of scanner")?;
+    let mut output = BufReader::new(output);
 
     let mut buf = String::new();
     loop {
-        output.read_line(&mut buf)?;
+        output.read_line(&mut buf).await?;
         channel.send(Reply::BarcodeOutput(buf.trim().to_string()))?;
         ctx.request_repaint();
         buf.clear();
@@ -112,9 +130,12 @@ async fn read_line_timeout(handle: &mut BufWriter<BufReader<SerialStream>>) -> R
     )
     .await
     {
-        Err(_) => Err(anyhow!("Timeout")),
+        Err(e) => {
+            debug!("Timeout: {:?}", e);
+            Err(e).with_context(|| "Connection timeout")
+        }
         Ok(res) => {
-            res.map(|_| ()).map_err(|_| anyhow!("Read error"))?;
+            res.map(|_| ()).map_err(anyhow::Error::from)?;
             Ok(buf)
         }
     }
@@ -131,10 +152,14 @@ pub async fn start_service(
     //     let ctx = ctx.clone();
     //     spawn_blocking(move || listen(channel, ctx));
     // }
-    tokio::task::spawn_blocking({
+    tokio::task::spawn({
         let channel = send_channel.clone();
         let ctx = ctx.clone();
-        move || listen(channel, ctx)
+        async move {
+            if let Err(e) = listen(channel, ctx).await {
+                debug!("Could not spawn scanner process: {:?}", e);
+            }
+        }
     });
     tokio::spawn({
         let ctx = ctx.clone();
@@ -150,12 +175,14 @@ pub async fn start_service(
                 debug!("Connection request");
                 handle = autoconnect(&send_channel).await;
                 if let Some(ref handle) = handle {
+                    debug!("Connected");
                     send_channel
                         .send(Reply::Connected(
                             handle.get_ref().get_ref().name().unwrap_or("".to_string()),
                         ))
                         .expect(ERROR);
                 } else {
+                    debug!("Failed to connect");
                     send_channel.send(Reply::Disconnected).expect(ERROR);
                 }
             }
@@ -172,7 +199,10 @@ pub async fn start_service(
                             send_channel.send(Reply::Disconnected).expect(ERROR);
                             None
                         }
-                        Ok(_) => Some(handle),
+                        Ok(_) => {
+                            handle.flush().await;
+                            Some(handle)
+                        }
                     },
                 }
             }
@@ -226,6 +256,9 @@ pub async fn start_service(
                         ))
                         .expect(ERROR);
                 }
+            }
+            Ok(Command::Terminate) => {
+                break;
             }
             Err(_) => (),
         }

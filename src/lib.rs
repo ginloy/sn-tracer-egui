@@ -35,12 +35,20 @@ pub struct App {
     connection_status: ConnectionStatus,
     download_path: Option<PathBuf>,
     previous_connection_request: Instant,
+    service_handle: Option<std::thread::JoinHandle<()>>
 }
 
 enum ConnectionStatus {
     Connected(String),
     Connecting,
     Disconnected,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.send_channel.send(Command::Terminate).expect("Thread died");
+        self.service_handle.take().map(|h| h.join().expect("Thread died"));
+    }
 }
 
 impl App {
@@ -64,7 +72,7 @@ impl App {
         let (send_channel_1, receive_channel_1) = std::sync::mpsc::channel();
         let (send_channel_2, receive_channel_2) = std::sync::mpsc::channel();
         let ctx = cc.egui_ctx.clone();
-        std::thread::spawn({
+        let service_handle = std::thread::spawn({
             let ctx = ctx.clone();
             move || service::start_service(receive_channel_1, send_channel_2, ctx.clone())
         });
@@ -79,6 +87,7 @@ impl App {
             connection_status: ConnectionStatus::Disconnected,
             download_path: None,
             previous_connection_request: Instant::now(),
+            service_handle: Some(service_handle)
         }
     }
 
