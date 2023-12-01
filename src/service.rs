@@ -23,7 +23,6 @@ pub enum Command {
     Write(String),
     Read,
     Download(PathBuf, Vec<String>, Vec<String>),
-    Terminate,
 }
 
 pub enum Reply {
@@ -105,8 +104,10 @@ async fn listen(
     let mut output = BufReader::new(output);
 
     let mut buf = String::new();
+    debug!("Started scanner");
     loop {
         output.read_line(&mut buf).await?;
+        debug!("Scanner output: {}", buf);
         channel.send(Reply::BarcodeOutput(buf.trim().to_string()))?;
         ctx.request_repaint();
         buf.clear();
@@ -146,17 +147,12 @@ pub async fn start_service(
     send_channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) {
-    // {
-    //     let channel = send_channel.clone();
-    //     let ctx = ctx.clone();
-    //     spawn_blocking(move || listen(channel, ctx));
-    // }
-    tokio::task::spawn({
+    tokio::spawn({
         let channel = send_channel.clone();
         let ctx = ctx.clone();
         async move {
             if let Err(e) = listen(channel, ctx).await {
-                debug!("Could not spawn scanner process: {:?}", e);
+                debug!("Scanner: {:?}", e);
             }
         }
     });
@@ -256,9 +252,6 @@ pub async fn start_service(
                         ))
                         .expect(ERROR);
                 }
-            }
-            Some(Command::Terminate) => {
-                break;
             }
             None => break,
         }

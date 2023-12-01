@@ -9,7 +9,7 @@ use rfd::*;
 use service::{Command, Reply};
 use std::{
     path::PathBuf,
-    time::{Instant, SystemTime},
+    time::{Instant, SystemTime, Duration},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -34,8 +34,43 @@ pub struct App {
     connection_status: ConnectionStatus,
     download_path: Option<PathBuf>,
     previous_connection_request: Instant,
-    service_handle: Option<std::thread::JoinHandle<()>>,
 }
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct AppStorage {
+    barcode_input: Vec<String>,
+    text:String,
+    device_output: Vec<String>,
+    keypress_buffer: Vec<(SystemTime, String)>,
+    download_path: Option<PathBuf>,
+}
+
+impl AppStorage {
+    fn from(app: &App) -> Self {
+        Self {
+            barcode_input: app.barcode_input.clone(),
+            text: app.text.clone(),
+            device_output: app.device_output.clone(),
+            keypress_buffer: app.keypress_buffer.clone(),
+            download_path: app.download_path.clone(),
+        }
+    }
+    
+    fn into(self, receive_channel: UnboundedReceiver<Reply>, send_channel: UnboundedSender<Command>) -> App {
+        App {
+            barcode_input: self.barcode_input,
+            text: self.text,
+            device_output: self.device_output,
+            receive_channel,
+            send_channel,
+            keypress_buffer: self.keypress_buffer,
+            connection_status: ConnectionStatus::Disconnected,
+            download_path: self.download_path,
+            previous_connection_request: Instant::now(),
+        }
+    }
+}
+
 
 enum ConnectionStatus {
     Connected(String),
@@ -43,16 +78,6 @@ enum ConnectionStatus {
     Disconnected,
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        self.send_channel
-            .send(Command::Terminate)
-            .expect("Thread died");
-        self.service_handle
-            .take()
-            .map(|h| h.join().expect("Thread died"));
-    }
-}
 
 impl App {
     // fn configure_text_styles(ctx: &egui::Context) {
@@ -70,27 +95,33 @@ impl App {
     //     .into();
     //     ctx.set_style(style);
     // }
+
     pub fn new(cc: &eframe::CreationContext) -> Self {
         // Self::configure_text_styles(&cc.egui_ctx);
         let (send_channel_1, receive_channel_1) = tokio::sync::mpsc::unbounded_channel();
         let (send_channel_2, receive_channel_2) = tokio::sync::mpsc::unbounded_channel();
         let ctx = cc.egui_ctx.clone();
-        let service_handle = std::thread::spawn({
+        let _ = std::thread::spawn({
             let ctx = ctx.clone();
             move || service::start_service(receive_channel_1, send_channel_2, ctx.clone())
         });
         send_channel_1.send(Command::Connect).expect("Thread died");
-        Self {
-            barcode_input: Vec::new(),
-            text: String::new(),
-            device_output: Vec::new(),
-            receive_channel: receive_channel_2,
-            send_channel: send_channel_1,
-            keypress_buffer: Vec::new(),
-            connection_status: ConnectionStatus::Disconnected,
-            download_path: None,
-            previous_connection_request: Instant::now(),
-            service_handle: Some(service_handle),
+        match cc.storage {
+            Some(storage) if eframe::get_value::<AppStorage>(storage, eframe::APP_KEY).is_some() => {
+                let app_storage: AppStorage = eframe::get_value(storage, eframe::APP_KEY).unwrap();
+                app_storage.into(receive_channel_2, send_channel_1)
+            }
+            _ => Self {
+                barcode_input: Vec::new(),
+                text: String::new(),
+                device_output: Vec::new(),
+                receive_channel: receive_channel_2,
+                send_channel: send_channel_1,
+                keypress_buffer: Vec::new(),
+                connection_status: ConnectionStatus::Disconnected,
+                download_path: None,
+                previous_connection_request: Instant::now(),
+            },
         }
     }
 
@@ -115,7 +146,7 @@ impl App {
             .show();
     }
 
-    fn get_download_path(&mut self) -> Option<PathBuf> {
+    fn get_download_path(&self) -> Option<PathBuf> {
         let current_path = self
             .download_path
             .clone()
@@ -217,6 +248,13 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, &AppStorage::from(self));
+    }
+    
+    fn auto_save_interval(&self) -> Duration {
+        Duration::from_secs(2)
+    }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_non_ui();
         self.flush_receive_channel(ctx);
