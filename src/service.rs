@@ -31,7 +31,6 @@ pub enum Reply {
     Read(String),
     ReadError(String),
     WriteError(String),
-    Keypress(std::time::SystemTime, String),
     Disconnected,
     DownloadError(String),
     BarcodeOutput(String),
@@ -210,7 +209,6 @@ pub async fn start_service(
                             None
                         }
                         Ok(_) => {
-                            handle.flush().await;
                             Some(handle)
                         }
                     },

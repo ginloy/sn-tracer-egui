@@ -193,40 +193,9 @@ impl App {
         }
     }
 
-    fn add_keypress(&mut self, time: SystemTime, s: String) {
-        if self.keypress_buffer.is_empty() {
-            self.keypress_buffer.push((time, s));
-        } else {
-            let (last_time, _) = self.keypress_buffer.last().unwrap();
-            if time
-                .duration_since(last_time.clone())
-                .unwrap_or(std::time::Duration::from_secs(1))
-                < std::time::Duration::from_millis(10)
-            {
-                if &s == "\r" {
-                    self.barcode_input.push(
-                        self.keypress_buffer
-                            .iter()
-                            .map(|(_, s)| s)
-                            .cloned()
-                            .collect::<String>(),
-                    );
-                } else {
-                    self.keypress_buffer.push((time, s));
-                }
-            } else {
-                self.keypress_buffer.clear();
-                self.keypress_buffer.push((time, s));
-            }
-        }
-    }
-
     fn flush_receive_channel(&mut self, _ctx: &egui::Context) {
         while let Ok(event) = self.receive_channel.try_recv() {
             match event {
-                Reply::Keypress(e, s) => {
-                    self.add_keypress(e, s);
-                }
                 Reply::Read(s) => {
                     self.device_output.push(s.trim().to_string());
                 }
@@ -381,7 +350,7 @@ impl eframe::App for App {
                             });
                         });
                     })
-                    .body(|mut body| {
+                    .body(|body| {
                         body.rows(height, self.barcode_input.len(), |i, mut row| {
                             row.col(|ui| {
                                 ui.add(Label::new(&self.barcode_input[i]).wrap(false));
