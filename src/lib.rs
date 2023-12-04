@@ -1,7 +1,3 @@
-use eframe::{
-    egui,
-    // epaint::FontFamily,
-};
 use egui::*;
 use egui_extras::*;
 use log::*;
@@ -9,11 +5,12 @@ use rfd::*;
 use service::{Command, Reply};
 use std::{
     path::PathBuf,
-    time::{Instant, SystemTime, Duration},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 mod service;
+pub mod testapp;
 
 const HEADERS: [&str; 4] = [
     "Barcode",
@@ -34,15 +31,25 @@ pub struct App {
     connection_status: ConnectionStatus,
     download_path: Option<PathBuf>,
     previous_connection_request: Instant,
+    keyboard: bool,
+    is_scanner_alive: bool,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+#[serde(default)]
 struct AppStorage {
     barcode_input: Vec<String>,
-    text:String,
+    text: String,
     device_output: Vec<String>,
     keypress_buffer: Vec<(SystemTime, String)>,
     download_path: Option<PathBuf>,
+
+    #[serde(default = "default_keyboard")]
+    keyboard: bool,
+}
+
+fn default_keyboard() -> bool {
+    false
 }
 
 impl AppStorage {
@@ -53,10 +60,15 @@ impl AppStorage {
             device_output: app.device_output.clone(),
             keypress_buffer: app.keypress_buffer.clone(),
             download_path: app.download_path.clone(),
+            keyboard: app.keyboard,
         }
     }
-    
-    fn into(self, receive_channel: UnboundedReceiver<Reply>, send_channel: UnboundedSender<Command>) -> App {
+
+    fn into(
+        self,
+        receive_channel: UnboundedReceiver<Reply>,
+        send_channel: UnboundedSender<Command>,
+    ) -> App {
         App {
             barcode_input: self.barcode_input,
             text: self.text,
@@ -67,17 +79,17 @@ impl AppStorage {
             connection_status: ConnectionStatus::Disconnected,
             download_path: self.download_path,
             previous_connection_request: Instant::now(),
+            keyboard: self.keyboard,
+            is_scanner_alive: true,
         }
     }
 }
-
 
 enum ConnectionStatus {
     Connected(String),
     Connecting,
     Disconnected,
 }
-
 
 impl App {
     // fn configure_text_styles(ctx: &egui::Context) {
@@ -107,7 +119,9 @@ impl App {
         });
         send_channel_1.send(Command::Connect).expect("Thread died");
         match cc.storage {
-            Some(storage) if eframe::get_value::<AppStorage>(storage, eframe::APP_KEY).is_some() => {
+            Some(storage)
+                if eframe::get_value::<AppStorage>(storage, eframe::APP_KEY).is_some() =>
+            {
                 let app_storage: AppStorage = eframe::get_value(storage, eframe::APP_KEY).unwrap();
                 app_storage.into(receive_channel_2, send_channel_1)
             }
@@ -121,6 +135,8 @@ impl App {
                 connection_status: ConnectionStatus::Disconnected,
                 download_path: None,
                 previous_connection_request: Instant::now(),
+                keyboard: false,
+                is_scanner_alive: true,
             },
         }
     }
@@ -242,6 +258,9 @@ impl App {
                         .expect("Thread died");
                     self.send_channel.send(Command::Read).expect("Thread died");
                 }
+                Reply::ScannerStartFail => {
+                    self.is_scanner_alive = false;
+                }
             }
         }
     }
@@ -251,11 +270,12 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, &AppStorage::from(self));
     }
-    
+
     fn auto_save_interval(&self) -> Duration {
-        Duration::from_secs(2)
+        Duration::from_millis(500)
     }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ctx.request_repaint_after(Duration::from_secs(2));
         self.update_non_ui();
         self.flush_receive_channel(ctx);
         egui::TopBottomPanel::top("top_panel")
@@ -279,6 +299,23 @@ impl eframe::App for App {
                         if ui.add(download_bytton).clicked() {
                             self.start_download();
                         };
+                        if ui
+                            .add(Button::new(RichText::new("⌨").heading()).selected(self.keyboard))
+                            .clicked()
+                        {
+                            self.keyboard = !self.keyboard;
+                            if self.keyboard {
+                                self.send_channel
+                                    .send(Command::StopScanner)
+                                    .expect("Thread died");
+                                self.is_scanner_alive = false;
+                            } else {
+                                self.send_channel
+                                    .send(Command::StartScanner)
+                                    .expect("Thread died");
+                                self.is_scanner_alive = true;
+                            }
+                        }
                     });
                 });
             });
@@ -286,11 +323,23 @@ impl eframe::App for App {
             .exact_height(40.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
+                    if !self.keyboard {
+                        if self.is_scanner_alive {
+                            ui.label("Scanning barcodes...");
+                        } else {
+                            ui.label("Barcode scanner task failed to start");
+                            ui.add(Label::new(
+                                RichText::new("Barcode scanner task failed to start")
+                                    .color(Color32::RED),
+                            ));
+                        }
+                        return;
+                    }
                     let input_box = ui.add(
                         egui::TextEdit::singleline(&mut self.text)
                             .desired_width(ui.available_width()),
                     );
-                    input_box.request_focus();
+                    // input_box.request_focus();
                     if input_box.ctx.input(|i| i.key_pressed(egui::Key::Enter))
                         && !self.text.trim().is_empty()
                     {
@@ -300,63 +349,56 @@ impl eframe::App for App {
                             .expect("Thread died");
                         self.send_channel.send(Command::Read).expect("Thread died");
                         self.text.clear();
+                        input_box.request_focus();
                     }
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             ScrollArea::horizontal().auto_shrink(false).show(ui, |ui| {
                 let width = ui.available_width();
+                let height = ui.text_style_height(&TextStyle::Body);
                 TableBuilder::new(ui)
                     .stick_to_bottom(true)
                     .striped(true)
                     .resizable(true)
                     .cell_layout(Layout::left_to_right(Align::Center))
-                    .cell_layout(Layout::top_down(Align::LEFT))
                     .columns(
-                        Column::initial(width / 4.2)
+                        Column::initial(width / 4.0)
                             .clip(true)
-                            .at_least(width / HEADERS.len() as f32 / 2.0),
+                            .at_least(width / 5.0)
+                            .at_most(width / 3.0),
                         3,
                     )
                     .column(
                         Column::remainder()
-                            .at_least(width / HEADERS.len() as f32 / 2.0)
-                            .clip(true),
+                            .clip(true)
+                            .at_least(width / 5.0)
+                            .at_most(width / 3.0),
                     )
-                    // .min_scrolled_height(0.0)
-                    .header(
-                        ctx.fonts(|f| f.row_height(&TextStyle::Heading.resolve(&ctx.style()))),
-                        |mut header| {
-                            for header_name in HEADERS.into_iter() {
-                                header.col(|ui| {
-                                    ui.add(
-                                        Label::new(RichText::new(header_name).strong()).wrap(false),
-                                    );
+                    .header(1.2 * height, |mut header| {
+                        HEADERS.into_iter().for_each(|header_name| {
+                            header.col(|ui| {
+                                ui.add(Label::new(RichText::new(header_name).strong()).wrap(false));
+                            });
+                        });
+                    })
+                    .body(|mut body| {
+                        body.rows(height, self.barcode_input.len(), |i, mut row| {
+                            row.col(|ui| {
+                                ui.add(Label::new(&self.barcode_input[i]).wrap(false));
+                            });
+                            let mut cols = self
+                                .device_output
+                                .get(i)
+                                .map(|s| s.as_str())
+                                .unwrap_or("")
+                                .split(",");
+                            for _ in 0..HEADERS.len() - 1 {
+                                row.col(|ui| {
+                                    ui.label(cols.next().unwrap_or("-"));
                                 });
                             }
-                        },
-                    )
-                    .body(|body| {
-                        body.rows(
-                            ctx.fonts(|f| f.row_height(&TextStyle::Body.resolve(&ctx.style()))),
-                            self.barcode_input.len(),
-                            |i, mut row| {
-                                row.col(|ui| {
-                                    ui.add(Label::new(&self.barcode_input[i]).wrap(false));
-                                });
-                                let mut cols = self
-                                    .device_output
-                                    .get(i)
-                                    .map(|s| s.as_str())
-                                    .unwrap_or("")
-                                    .split(",");
-                                for _ in 0..HEADERS.len() - 1 {
-                                    row.col(|ui| {
-                                        ui.label(cols.next().unwrap_or("-"));
-                                    });
-                                }
-                            },
-                        )
+                        });
                     });
             })
         });

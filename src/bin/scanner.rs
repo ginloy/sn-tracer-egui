@@ -14,11 +14,10 @@ fn main() {
         (Some(s), Some((_, last_t)))
             if last_t.elapsed().as_micros() < DELAY_MICROS && s == "\r".to_string() =>
         {
+            let res = events.iter().map(|(s, _)| s).cloned().collect::<String>();
             debug!("{}", last_t.elapsed().as_micros());
-            println!(
-                "{}",
-                events.iter().map(|(s, _)| s).cloned().collect::<String>()
-            );
+            debug!("Scanned: {res}");
+            println!("{res}",);
             events.clear();
         }
         (Some(s), Some((_, last_t))) if last_t.elapsed().as_micros() < DELAY_MICROS => {

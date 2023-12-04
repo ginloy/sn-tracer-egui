@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    process::Stdio,
-};
+use std::{path::PathBuf, process::Stdio};
 
 use anyhow::{bail, Context, Result};
 use eframe::egui;
@@ -17,12 +14,15 @@ use tokio_serial::{SerialPort, SerialStream};
 use crate::HEADERS;
 
 const ERROR: &str = "Channel closed";
-const TIMEOUT_MS: u64 = 2000;
+const TIMEOUT_MS: u64 = 200;
+const APPROVED_PIDS: &[u16] = &[24577];
 pub enum Command {
     Connect,
     Write(String),
     Read,
     Download(PathBuf, Vec<String>, Vec<String>),
+    StopScanner,
+    StartScanner,
 }
 
 pub enum Reply {
@@ -35,6 +35,7 @@ pub enum Reply {
     Disconnected,
     DownloadError(String),
     BarcodeOutput(String),
+    ScannerStartFail,
 }
 
 fn get_available_devices() -> Vec<String> {
@@ -44,7 +45,7 @@ fn get_available_devices() -> Vec<String> {
         .filter(|d| {
             if let tokio_serial::SerialPortType::UsbPort(ref info) = d.port_type {
                 debug!("Detected: {}, {:?}", d.port_name, info);
-                return info.pid == 24577;
+                return APPROVED_PIDS.contains(&info.pid);
             }
             false
         })
@@ -76,13 +77,15 @@ async fn try_connect(device: String) -> Result<BufReader<SerialStream>> {
     let handle = SerialStream::open(&tokio_serial::new(&device, 9600))?;
     let mut handle = BufReader::new(handle);
     debug!("Handle obtained: {:?}", handle);
-    tokio::time::sleep(Duration::from_millis(TIMEOUT_MS)).await;
-    for _ in 0..5 {
+    for _ in 0..20 {
         handle.write_all("connect\n".as_bytes()).await?;
-        let reply = read_line_timeout(&mut handle).await?;
-        debug!("Reply: {}", reply);
-        if reply.trim() == "connected" {
-            return Ok(handle);
+        let reply = read_line_timeout(&mut handle).await;
+        debug!("Reply: {:?}", reply);
+        if let Ok(reply) = reply {
+            if reply.trim() == "connected" {
+                debug!("Reply: {}", reply);
+                return Ok(handle);
+            }
         }
     }
     bail!("Could not establish handshake with {:?}", handle)
@@ -112,6 +115,21 @@ async fn listen(
         ctx.request_repaint();
         buf.clear();
     }
+}
+
+fn start_listen_task(
+    channel: tokio::sync::mpsc::UnboundedSender<Reply>,
+    ctx: egui::Context,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn({
+        async move {
+            let channel_2 = channel.clone();
+            if let Err(e) = listen(channel, ctx).await {
+                debug!("Scanner: {:?}", e);
+                channel_2.send(Reply::ScannerStartFail).expect(ERROR);
+            }
+        }
+    })
 }
 
 async fn refresh_ui(ctx: egui::Context) {
@@ -147,15 +165,7 @@ pub async fn start_service(
     send_channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) {
-    tokio::spawn({
-        let channel = send_channel.clone();
-        let ctx = ctx.clone();
-        async move {
-            if let Err(e) = listen(channel, ctx).await {
-                debug!("Scanner: {:?}", e);
-            }
-        }
-    });
+    let mut scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
     tokio::spawn({
         let ctx = ctx.clone();
         async move { refresh_ui(ctx).await }
@@ -185,13 +195,17 @@ pub async fn start_service(
             Some(Command::Write(s)) => {
                 handle = match handle {
                     None => {
-                        send_channel.send(Reply::WriteError("Not connected".into()));
+                        send_channel
+                            .send(Reply::WriteError("Not connected".into()))
+                            .expect(ERROR);
                         send_channel.send(Reply::Disconnected).expect(ERROR);
                         None
                     }
                     Some(mut handle) => match handle.write_all(s.as_bytes()).await {
                         Err(e) => {
-                            send_channel.send(Reply::WriteError(format!("{:?}", e)));
+                            send_channel
+                                .send(Reply::WriteError(format!("{:?}", e)))
+                                .expect(ERROR);
                             send_channel.send(Reply::Disconnected).expect(ERROR);
                             None
                         }
@@ -252,6 +266,15 @@ pub async fn start_service(
                         ))
                         .expect(ERROR);
                 }
+            }
+            Some(Command::StopScanner) => {
+                debug!("Stop scanner command received");
+                scanner_task.abort();
+            }
+            Some(Command::StartScanner) => {
+                debug!("Start scanner command received");
+                scanner_task.abort();
+                scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
             }
             None => break,
         }
