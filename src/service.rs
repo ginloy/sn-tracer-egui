@@ -15,7 +15,7 @@ use crate::HEADERS;
 
 const ERROR: &str = "Channel closed";
 const TIMEOUT_MS: u64 = 200;
-const APPROVED_PIDS: &[u16] = &[24577];
+const APPROVED_PIDS: &[u16] = &[24577, 29987];
 pub enum Command {
     Connect,
     Write(String),
