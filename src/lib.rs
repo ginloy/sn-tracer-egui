@@ -195,9 +195,10 @@ impl App {
 
     fn flush_receive_channel(&mut self, _ctx: &egui::Context) {
         while let Ok(event) = self.receive_channel.try_recv() {
+            debug!("Received event: {:?}", event);
             match event {
                 Reply::Read(s) => {
-                    self.device_output.push(s.trim().to_string());
+                    self.device_output.push(s.trim().into());
                 }
                 Reply::Connected(d) => {
                     self.connection_status = ConnectionStatus::Connected(d);
@@ -207,9 +208,6 @@ impl App {
                 }
                 Reply::Disconnected => {
                     self.connection_status = ConnectionStatus::Disconnected;
-                }
-                Reply::WriteError(s) => {
-                    debug!("Write error: {}", s);
                 }
                 Reply::ReadError(s) => {
                     debug!("Read error: {}", s);
@@ -221,9 +219,6 @@ impl App {
                 }
                 Reply::BarcodeOutput(s) => {
                     self.barcode_input.push(s);
-                    self.send_channel
-                        .send(Command::Write("read\n".to_string()))
-                        .expect("Thread died");
                     self.send_channel.send(Command::Read).expect("Thread died");
                 }
                 Reply::ScannerStartFail => {
@@ -312,9 +307,6 @@ impl eframe::App for App {
                         && !self.text.trim().is_empty()
                     {
                         self.barcode_input.push(self.text.clone());
-                        self.send_channel
-                            .send(Command::Write("read\n".to_string()))
-                            .expect("Thread died");
                         self.send_channel.send(Command::Read).expect("Thread died");
                         self.text.clear();
                         input_box.request_focus();

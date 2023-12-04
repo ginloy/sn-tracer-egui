@@ -14,23 +14,24 @@ use tokio_serial::{SerialPort, SerialStream};
 use crate::HEADERS;
 
 const ERROR: &str = "Channel closed";
-const TIMEOUT_MS: u64 = 200;
+const TIMEOUT_MS: u64 = 1000;
 const APPROVED_PIDS: &[u16] = &[24577, 29987];
+
+#[derive(Debug, Clone)]
 pub enum Command {
     Connect,
-    Write(String),
     Read,
     Download(PathBuf, Vec<String>, Vec<String>),
     StopScanner,
     StartScanner,
 }
 
+#[derive(Debug, Clone)]
 pub enum Reply {
     Connected(String),
     Connecting,
     Read(String),
     ReadError(String),
-    WriteError(String),
     Disconnected,
     DownloadError(String),
     BarcodeOutput(String),
@@ -77,14 +78,9 @@ async fn try_connect(device: String) -> Result<BufReader<SerialStream>> {
     let mut handle = BufReader::new(handle);
     debug!("Handle obtained: {:?}", handle);
     for _ in 0..20 {
-        handle.write_all("connect\n".as_bytes()).await?;
-        let reply = read_line_timeout(&mut handle).await;
-        debug!("Reply: {:?}", reply);
-        if let Ok(reply) = reply {
-            if reply.trim() == "connected" {
-                debug!("Reply: {}", reply);
-                return Ok(handle);
-            }
+        if let Ok(true) = check_connection(&mut handle).await {
+            debug!("Connected to {:?}", device);
+            return Ok(handle);
         }
     }
     bail!("Could not establish handshake with {:?}", handle)
@@ -158,6 +154,18 @@ async fn read_line_timeout(handle: &mut BufReader<SerialStream>) -> Result<Strin
     }
 }
 
+async fn check_connection(handle: &mut BufReader<SerialStream>) -> Result<bool> {
+    handle.write_all("connect\n".as_bytes()).await?;
+    let reply = read_line_timeout(handle).await?;
+    Ok(reply.trim() == "connected")
+}
+
+async fn read_info(handle: &mut BufReader<SerialStream>) -> Result<String> {
+    handle.write_all("read\n".as_bytes()).await?;
+    let reply = read_line_timeout(handle).await?;
+    Ok(reply.trim().into())
+}
+
 #[tokio::main]
 pub async fn start_service(
     mut receive_channel: tokio::sync::mpsc::UnboundedReceiver<Command>,
@@ -170,10 +178,29 @@ pub async fn start_service(
         async move { refresh_ui(ctx).await }
     });
     let mut handle: Option<BufReader<SerialStream>> = None;
+    let mut prev_check = std::time::Instant::now();
 
     loop {
-        match receive_channel.recv().await {
-            Some(Command::Connect) => {
+        if prev_check.elapsed().as_millis() > 500 {
+            prev_check = std::time::Instant::now();
+            handle = {
+                if let Some(mut handle) = handle {
+                    if let Ok(true) = check_connection(&mut handle).await {
+                        Some(handle)
+                    } else {
+                        debug!("Connection lost");
+                        send_channel.send(Reply::Disconnected).expect(ERROR);
+                        ctx.request_repaint();
+                        None
+                    }
+                } else {
+                    handle
+                }
+            };
+        }
+
+        match receive_channel.try_recv() {
+            Ok(Command::Connect) => {
                 debug!("Connection request");
                 handle = match autoconnect(&send_channel).await {
                     Ok(handle) => {
@@ -190,31 +217,9 @@ pub async fn start_service(
                         None
                     }
                 };
+                ctx.request_repaint();
             }
-            Some(Command::Write(s)) => {
-                handle = match handle {
-                    None => {
-                        send_channel
-                            .send(Reply::WriteError("Not connected".into()))
-                            .expect(ERROR);
-                        send_channel.send(Reply::Disconnected).expect(ERROR);
-                        None
-                    }
-                    Some(mut handle) => match handle.write_all(s.as_bytes()).await {
-                        Err(e) => {
-                            send_channel
-                                .send(Reply::WriteError(format!("{:?}", e)))
-                                .expect(ERROR);
-                            send_channel.send(Reply::Disconnected).expect(ERROR);
-                            None
-                        }
-                        Ok(_) => {
-                            Some(handle)
-                        }
-                    },
-                }
-            }
-            Some(Command::Read) => {
+            Ok(Command::Read) => {
                 handle = match handle {
                     None => {
                         send_channel
@@ -224,11 +229,11 @@ pub async fn start_service(
                         None
                     }
                     Some(mut handle) => {
-                        let result = read_line_timeout(&mut handle).await.context("Read error");
+                        let result = read_info(&mut handle).await;
                         match result {
                             Err(e) => {
                                 send_channel
-                                    .send(Reply::ReadError(format!("{:?}", e)))
+                                    .send(Reply::ReadError(e.to_string()))
                                     .expect(ERROR);
                                 send_channel.send(Reply::Disconnected).expect(ERROR);
                                 None
@@ -239,9 +244,10 @@ pub async fn start_service(
                             }
                         }
                     }
-                }
+                };
+                ctx.request_repaint();
             }
-            Some(Command::Download(path, barcode, device)) => {
+            Ok(Command::Download(path, barcode, device)) => {
                 debug!("Download to {:?}", path);
                 let mut data = HEADERS.join(",");
                 data.push('\n');
@@ -263,19 +269,19 @@ pub async fn start_service(
                             format!("Download failed: {:?}", e).into(),
                         ))
                         .expect(ERROR);
+                    ctx.request_repaint();
                 }
             }
-            Some(Command::StopScanner) => {
+            Ok(Command::StopScanner) => {
                 debug!("Stop scanner command received");
                 scanner_task.abort();
             }
-            Some(Command::StartScanner) => {
+            Ok(Command::StartScanner) => {
                 debug!("Start scanner command received");
                 scanner_task.abort();
                 scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
             }
-            None => break,
+            Err(_) => (),
         }
-        ctx.request_repaint();
     }
 }
