@@ -10,7 +10,6 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 mod service;
-pub mod testapp;
 
 const HEADERS: [&str; 4] = [
     "Barcode",
