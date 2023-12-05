@@ -1,8 +1,8 @@
-#![cfg_attr(all(target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(all(target_os = "windows", not(feature = "console")), windows_subsystem = "windows")]
 use log::{debug, error};
 use std::time::Instant;
 
-const DELAY_MICROS: u128 = 10000;
+const DELAY_MICROS: u128 = 20000;
 
 fn main() {
     env_logger::Builder::from_default_env().init();
