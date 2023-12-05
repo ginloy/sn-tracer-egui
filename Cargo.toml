@@ -19,3 +19,6 @@ rfd = { version = "0.12.1", default-features = false, features = ["xdg-portal"] 
 serde = { version = "1.0.193", features = ["serde_derive"] }
 tokio = { version = "1.34.0", features = ["full"] }
 tokio-serial = { version = "5.4.4", features = ["libudev"] }
+
+[features]
+console = []
