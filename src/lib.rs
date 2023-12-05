@@ -13,8 +13,8 @@ mod service;
 
 const HEADERS: [&str; 4] = [
     "Barcode",
-    "Serial Number (DEC)",
     "Serial Number (HEX)",
+    "Serial Number (DEC)",
     "Manufacture Date",
 ];
 
@@ -143,7 +143,7 @@ impl App {
     fn update_non_ui(&mut self) {
         match &self.connection_status {
             ConnectionStatus::Disconnected => {
-                if self.previous_connection_request.elapsed() > std::time::Duration::from_secs(2) {
+                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
                     self.previous_connection_request = Instant::now();
                     self.send_channel.send(Command::Connect).unwrap();
                 }

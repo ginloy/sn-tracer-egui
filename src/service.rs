@@ -81,6 +81,10 @@ async fn autoconnect(send_channel: &UnboundedSender<Reply>) -> Result<BufReader<
     }
     results
         .into_iter()
+        .map(|r| {
+            debug!("{:?}", r);
+            r
+        })
         .find_map(Result::ok)
         .context("Failed to connect to available devices")
 }
@@ -94,6 +98,7 @@ async fn try_connect(device: String) -> Result<BufReader<SerialStream>> {
             debug!("Connected to {:?}", device);
             return Ok(handle);
         }
+        tokio::time::sleep(Duration::from_millis(TIMEOUT_MS)).await;
     }
     bail!("Could not establish handshake with {:?}", handle)
 }
@@ -143,7 +148,7 @@ fn start_listen_task(
 }
 
 async fn refresh_ui(ctx: egui::Context) {
-    let mut interval = interval(Duration::from_secs(2));
+    let mut interval = interval(Duration::from_millis(200));
     loop {
         interval.tick().await;
         ctx.request_repaint();
@@ -198,6 +203,11 @@ pub async fn start_service(
         match receive_channel.recv().await {
             Some(Command::Connect) => {
                 debug!("Connection request");
+                if let Some(handle) = handle {
+                    send_channel.send(Reply::Connected(
+                        handle.get_ref().name().unwrap_or("Unknown port".into()),
+                    )).expect(ERROR);
+                }
                 handle = match autoconnect(&send_channel).await {
                     Ok(handle) => {
                         send_channel
