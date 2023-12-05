@@ -118,7 +118,9 @@ async fn listen(
     loop {
         output.read_line(&mut buf).await?;
         debug!("Scanner output: {}", buf);
-        channel.send(Reply::BarcodeOutput(buf.trim().to_string()))?;
+        if let Err(_) = channel.send(Reply::BarcodeOutput(buf.trim().to_string())) {
+            scanner.kill().await.unwrap();
+        }
         ctx.request_repaint();
         buf.clear();
     }
