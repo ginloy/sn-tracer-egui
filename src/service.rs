@@ -119,7 +119,9 @@ async fn listen(
     loop {
         output.read_line(&mut buf).await?;
         debug!("Scanner output: {}", buf);
-        channel.send(Reply::BarcodeOutput(buf.trim().to_string()))?;
+        if let Err(_) = channel.send(Reply::BarcodeOutput(buf.trim().to_string())) {
+            scanner.kill().await.unwrap();
+        }
         ctx.request_repaint();
         buf.clear();
     }
@@ -185,6 +187,7 @@ pub async fn start_service(
     send_channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(20));
     let mut scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
     tokio::spawn({
         let ctx = ctx.clone();
