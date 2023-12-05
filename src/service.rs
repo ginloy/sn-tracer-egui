@@ -16,6 +16,17 @@ use crate::HEADERS;
 const ERROR: &str = "Channel closed";
 const TIMEOUT_MS: u64 = 1000;
 const APPROVED_PIDS: &[u16] = &[24577, 29987];
+#[cfg(target_family = "windows")]
+const SCANNER_EXE_NAME: &str = "scanner.exe";
+#[cfg(target_family = "unix")]
+const SCANNER_EXE_NAME: &str = "scanner";
+
+fn get_scanner_path() -> Result<PathBuf> {
+    let mut path = std::env::current_exe()?;
+    path.pop();
+    path.push(SCANNER_EXE_NAME);
+    Ok(path)
+}
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -90,7 +101,8 @@ async fn listen(
     channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) -> Result<()> {
-    let scanner_path = std::env::var("SCANNER_PATH")?;
+    let scanner_path = get_scanner_path()?;
+    debug!("Scanner path: {:?}", scanner_path);
     let mut scanner = tokio::process::Command::new(scanner_path)
         .kill_on_drop(true)
         .stdout(Stdio::piped())
