@@ -111,7 +111,7 @@ async fn listen(
     debug!("Scanner path: {:?}", scanner_path);
     let mut scanner = tokio::process::Command::new(scanner_path)
         .args(&["--parent", &std::process::id().to_string()])
-        .kill_on_drop(false)
+        .kill_on_drop(true)
         .stdout(Stdio::piped())
         .spawn()?;
     let output = scanner
