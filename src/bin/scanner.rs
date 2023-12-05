@@ -1,3 +1,4 @@
+#![cfg_attr(all(target_os = "windows"), windows_subsystem = "windows")]
 use log::{debug, error};
 use std::time::Instant;
 

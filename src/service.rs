@@ -184,6 +184,7 @@ pub async fn start_service(
     send_channel: tokio::sync::mpsc::UnboundedSender<Reply>,
     ctx: egui::Context,
 ) {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(20));
     let mut scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
     tokio::spawn({
         let ctx = ctx.clone();
@@ -193,6 +194,7 @@ pub async fn start_service(
     let mut prev_check = std::time::Instant::now();
 
     loop {
+        interval.tick().await;
         if prev_check.elapsed().as_millis() > 500 {
             prev_check = std::time::Instant::now();
             handle = {
