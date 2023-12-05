@@ -290,7 +290,6 @@ impl eframe::App for App {
                         if self.is_scanner_alive {
                             ui.label("Scanning barcodes...");
                         } else {
-                            ui.label("Barcode scanner task failed to start");
                             ui.add(Label::new(
                                 RichText::new("Barcode scanner task failed to start")
                                     .color(Color32::RED),
