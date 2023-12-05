@@ -22,7 +22,7 @@ const SCANNER_EXE_NAME: &str = "scanner.exe";
 const SCANNER_EXE_NAME: &str = "scanner";
 
 fn get_scanner_path() -> Result<PathBuf> {
-    let mut path = std::env::current_exe()?;
+    let mut path = std::fs::canonicalize(std::env::current_exe()?)?;
     path.pop();
     path.push(SCANNER_EXE_NAME);
     Ok(path)
