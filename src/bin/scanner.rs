@@ -23,6 +23,7 @@ fn main() {
         std::thread::spawn(move || {
             let mut sys = System::new_all();
             loop {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
                 if !sys.refresh_process(parent_id) {
                     debug!("Parent process is dead, exiting");
                     std::process::exit(0);
