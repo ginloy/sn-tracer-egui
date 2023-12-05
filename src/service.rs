@@ -110,7 +110,8 @@ async fn listen(
     let scanner_path = get_scanner_path()?;
     debug!("Scanner path: {:?}", scanner_path);
     let mut scanner = tokio::process::Command::new(scanner_path)
-        .kill_on_drop(true)
+        .args(&["--parent", &std::process::id().to_string()])
+        .kill_on_drop(false)
         .stdout(Stdio::piped())
         .spawn()?;
     let output = scanner
@@ -204,9 +205,11 @@ pub async fn start_service(
             Some(Command::Connect) => {
                 debug!("Connection request");
                 if let Some(handle) = handle {
-                    send_channel.send(Reply::Connected(
-                        handle.get_ref().name().unwrap_or("Unknown port".into()),
-                    )).expect(ERROR);
+                    send_channel
+                        .send(Reply::Connected(
+                            handle.get_ref().name().unwrap_or("Unknown port".into()),
+                        ))
+                        .expect(ERROR);
                 }
                 handle = match autoconnect(&send_channel).await {
                     Ok(handle) => {
