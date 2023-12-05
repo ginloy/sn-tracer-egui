@@ -148,6 +148,12 @@ impl App {
                     self.send_channel.send(Command::Connect).unwrap();
                 }
             }
+            ConnectionStatus::Connected(_) => {
+                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
+                    self.previous_connection_request = Instant::now();
+                    self.send_channel.send(Command::CheckConnection).unwrap();
+                }
+            }
             _ => {}
         }
     }

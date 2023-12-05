@@ -35,6 +35,7 @@ pub enum Command {
     Download(PathBuf, Vec<String>, Vec<String>),
     StopScanner,
     StartScanner,
+    CheckConnection,
 }
 
 #[derive(Debug, Clone)]
@@ -190,29 +191,10 @@ pub async fn start_service(
         async move { refresh_ui(ctx).await }
     });
     let mut handle: Option<BufReader<SerialStream>> = None;
-    let mut prev_check = std::time::Instant::now();
 
     loop {
-        if prev_check.elapsed().as_millis() > 500 {
-            prev_check = std::time::Instant::now();
-            handle = {
-                if let Some(mut handle) = handle {
-                    if let Ok(true) = check_connection(&mut handle).await {
-                        Some(handle)
-                    } else {
-                        debug!("Connection lost");
-                        send_channel.send(Reply::Disconnected).expect(ERROR);
-                        ctx.request_repaint();
-                        None
-                    }
-                } else {
-                    handle
-                }
-            };
-        }
-
-        match receive_channel.try_recv() {
-            Ok(Command::Connect) => {
+        match receive_channel.recv().await {
+            Some(Command::Connect) => {
                 debug!("Connection request");
                 handle = match autoconnect(&send_channel).await {
                     Ok(handle) => {
@@ -231,7 +213,7 @@ pub async fn start_service(
                 };
                 ctx.request_repaint();
             }
-            Ok(Command::Read) => {
+            Some(Command::Read) => {
                 handle = match handle {
                     None => {
                         send_channel
@@ -259,7 +241,7 @@ pub async fn start_service(
                 };
                 ctx.request_repaint();
             }
-            Ok(Command::Download(path, barcode, device)) => {
+            Some(Command::Download(path, barcode, device)) => {
                 debug!("Download to {:?}", path);
                 let mut data = HEADERS.join(",");
                 data.push('\n');
@@ -284,16 +266,33 @@ pub async fn start_service(
                     ctx.request_repaint();
                 }
             }
-            Ok(Command::StopScanner) => {
+            Some(Command::StopScanner) => {
                 debug!("Stop scanner command received");
                 scanner_task.abort();
             }
-            Ok(Command::StartScanner) => {
+            Some(Command::StartScanner) => {
                 debug!("Start scanner command received");
                 scanner_task.abort();
                 scanner_task = start_listen_task(send_channel.clone(), ctx.clone());
             }
-            Err(_) => (),
+            Some(Command::CheckConnection) => {
+                debug!("Checking connection");
+                handle = {
+                    if let Some(mut handle) = handle {
+                        if let Ok(true) = check_connection(&mut handle).await {
+                            Some(handle)
+                        } else {
+                            debug!("Connection lost");
+                            send_channel.send(Reply::Disconnected).expect(ERROR);
+                            ctx.request_repaint();
+                            None
+                        }
+                    } else {
+                        handle
+                    }
+                };
+            }
+            None => break,
         }
     }
 }
