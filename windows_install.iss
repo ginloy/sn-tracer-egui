@@ -8,7 +8,7 @@
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{07674475-C128-402D-8ACF-4C1DF7CD1163}
+AppId={{3CDE435E-37BD-4B7A-884C-EC4667183CF1}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
@@ -17,7 +17,8 @@ DisableProgramGroupPage=yes
 ; Remove the following line to run in administrative install mode (install for all users.)
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputBaseFilename=mysetup
+OutputDir={#SourcePath}\Output
+OutputBaseFilename=setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -29,8 +30,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "C:\Users\Company Intern\GitHub\sn-tracer-egui\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\Company Intern\GitHub\sn-tracer-egui\target\release\scanner.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}\target\release\scanner.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
