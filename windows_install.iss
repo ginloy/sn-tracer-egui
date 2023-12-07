@@ -2,15 +2,16 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "sn-tracer"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppExeName "sn-tracer-egui.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{3CDE435E-37BD-4B7A-884C-EC4667183CF1}
+AppId={{14E99920-2F5E-4F4E-A648-AD222338CF6B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppPublisher=Orient Technology (S) Pte Ltd
 ;AppVerName={#MyAppName} {#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DisableProgramGroupPage=yes
