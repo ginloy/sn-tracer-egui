@@ -6,8 +6,9 @@ use clap::Parser;
 use log::{debug, error};
 use std::time::Instant;
 use sysinfo::{System, SystemExt};
+use tracing::*;
 
-const DELAY_MICROS: u128 = 20000;
+const DELAY_MILLIS: u128 = 50;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -38,16 +39,16 @@ fn main() {
             events.push((s, Instant::now()));
         }
         (Some(s), Some((_, last_t)))
-            if last_t.elapsed().as_micros() < DELAY_MICROS && s == *"\r" =>
+            if last_t.elapsed().as_micros() < DELAY_MILLIS && s == *"\r" =>
         {
             let res = events.iter().map(|(s, _)| s).cloned().collect::<String>();
-            debug!("{}", last_t.elapsed().as_micros());
-            debug!("Scanned: {res}");
-            println!("{res}",);
+            trace!("{}", last_t.elapsed().as_millis());
+            info!("Scanned: {res}");
+            println!("{res}");
             events.clear();
         }
-        (Some(s), Some((_, last_t))) if last_t.elapsed().as_micros() < DELAY_MICROS => {
-            debug!("{}", last_t.elapsed().as_micros());
+        (Some(s), Some((_, last_t))) if last_t.elapsed().as_millis() < DELAY_MILLIS => {
+            trace!("{}", last_t.elapsed().as_millis());
             events.push((s, Instant::now()));
         }
         (Some(s), _) => {
