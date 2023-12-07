@@ -3,7 +3,7 @@
     windows_subsystem = "windows"
 )]
 use clap::Parser;
-use log::{debug, error};
+use log::*;
 use std::time::Instant;
 use sysinfo::{System, SystemExt};
 
@@ -19,13 +19,13 @@ fn main() {
     env_logger::Builder::from_default_env().init();
     let args = Args::parse();
     if let Some(parent_id) = args.parent {
-        debug!("Parent PID: {}", parent_id);
+        info!("Parent PID: {}", parent_id);
         std::thread::spawn(move || {
             let mut sys = System::new_all();
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
                 if !sys.refresh_process(parent_id) {
-                    debug!("Parent process is dead, exiting");
+                    error!("Parent process is dead, exiting");
                     std::process::exit(0);
                 }
             }
