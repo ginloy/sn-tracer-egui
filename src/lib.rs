@@ -275,7 +275,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.heading(match &self.connection_status {
-                        ConnectionStatus::Connected(d) => format!("Connected to {}", d),
+                        ConnectionStatus::Connected(_) => "Connected".into(),
                         ConnectionStatus::Connecting => "Attempting Connection...".to_string(),
                         ConnectionStatus::Disconnected => "Disconnected".to_string(),
                     });
