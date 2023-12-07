@@ -38,7 +38,7 @@ fn main() {
             events.push((s, Instant::now()));
         }
         (Some(s), Some((_, last_t)))
-            if last_t.elapsed().as_micros() < DELAY_MICROS && s == "\r".to_string() =>
+            if last_t.elapsed().as_micros() < DELAY_MICROS && s == *"\r" =>
         {
             let res = events.iter().map(|(s, _)| s).cloned().collect::<String>();
             debug!("{}", last_t.elapsed().as_micros());

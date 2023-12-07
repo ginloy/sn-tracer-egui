@@ -1,5 +1,5 @@
 use egui::*;
-use egui_extras::*;
+use itertools::Itertools;
 use log::*;
 use rfd::*;
 use service::{Command, Reply};
@@ -10,6 +10,11 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 mod service;
+mod widgets {
+    pub mod csv_table;
+}
+
+use widgets::csv_table::CsvTable;
 
 const HEADERS: [&str; 4] = [
     "Barcode",
@@ -143,19 +148,37 @@ impl App {
     fn update_non_ui(&mut self) {
         match &self.connection_status {
             ConnectionStatus::Disconnected => {
-                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
+                if self.previous_connection_request.elapsed()
+                    > std::time::Duration::from_millis(200)
+                {
                     self.previous_connection_request = Instant::now();
                     self.send_channel.send(Command::Connect).unwrap();
                 }
             }
             ConnectionStatus::Connected(_) => {
-                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
+                if self.previous_connection_request.elapsed()
+                    > std::time::Duration::from_millis(200)
+                {
                     self.previous_connection_request = Instant::now();
                     self.send_channel.send(Command::CheckConnection).unwrap();
                 }
             }
             _ => {}
         }
+    }
+
+    fn get_csv(&self) -> String {
+        let rows = std::cmp::max(self.barcode_input.len(), self.device_output.len());
+        let mut barcodes = self.barcode_input.iter().map(String::as_str);
+        let mut device_output = self.device_output.iter().map(String::as_str);
+        let body = (0..rows)
+            .map(|_| {
+                let barcode = barcodes.next().unwrap_or("");
+                let device_output = device_output.next().unwrap_or("");
+                format!("{},{}", barcode, device_output)
+            })
+            .join("\n");
+        HEADERS.join(",") + "\n" + &body
     }
 
     fn show_download_error_dialog(&self, msg: &str) {
@@ -319,53 +342,7 @@ impl eframe::App for App {
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            ScrollArea::horizontal().auto_shrink(false).show(ui, |ui| {
-                let width = ui.available_width();
-                let height = ui.text_style_height(&TextStyle::Body);
-                TableBuilder::new(ui)
-                    .stick_to_bottom(true)
-                    .striped(true)
-                    .resizable(true)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .columns(
-                        Column::initial(width / 4.0)
-                            .clip(true)
-                            .at_least(width / 5.0)
-                            .at_most(width / 3.0),
-                        3,
-                    )
-                    .column(
-                        Column::remainder()
-                            .clip(true)
-                            .at_least(width / 5.0)
-                            .at_most(width / 3.0),
-                    )
-                    .header(1.2 * height, |mut header| {
-                        HEADERS.into_iter().for_each(|header_name| {
-                            header.col(|ui| {
-                                ui.add(Label::new(RichText::new(header_name).strong()).wrap(false));
-                            });
-                        });
-                    })
-                    .body(|body| {
-                        body.rows(height, self.barcode_input.len(), |i, mut row| {
-                            row.col(|ui| {
-                                ui.add(Label::new(&self.barcode_input[i]).wrap(false));
-                            });
-                            let mut cols = self
-                                .device_output
-                                .get(i)
-                                .map(|s| s.as_str())
-                                .unwrap_or("")
-                                .split(",");
-                            for _ in 0..HEADERS.len() - 1 {
-                                row.col(|ui| {
-                                    ui.label(cols.next().unwrap_or("-"));
-                                });
-                            }
-                        });
-                    });
-            })
+            ui.add(CsvTable::new(&self.get_csv()).expect("This should not happen"));
         });
     }
 }

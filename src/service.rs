@@ -51,7 +51,7 @@ pub enum Reply {
 }
 
 fn get_available_devices() -> Vec<String> {
-    let devices = tokio_serial::available_ports().unwrap_or(Vec::new());
+    let devices = tokio_serial::available_ports().unwrap_or_default();
     devices
         .into_iter()
         .filter(|d| {
@@ -110,7 +110,7 @@ async fn listen(
     let scanner_path = get_scanner_path()?;
     debug!("Scanner path: {:?}", scanner_path);
     let mut scanner = tokio::process::Command::new(scanner_path)
-        .args(&["--parent", &std::process::id().to_string()])
+        .args(["--parent", &std::process::id().to_string()])
         .kill_on_drop(true)
         .stdout(Stdio::piped())
         .spawn()?;
@@ -125,7 +125,10 @@ async fn listen(
     loop {
         output.read_line(&mut buf).await?;
         debug!("Scanner output: {}", buf);
-        if let Err(_) = channel.send(Reply::BarcodeOutput(buf.trim().to_string())) {
+        if channel
+            .send(Reply::BarcodeOutput(buf.trim().to_string()))
+            .is_err()
+        {
             scanner.kill().await.unwrap();
         }
         ctx.request_repaint();
@@ -274,9 +277,7 @@ pub async fn start_service(
                 );
                 if let Err(e) = std::fs::write(path, data.as_bytes()) {
                     send_channel
-                        .send(Reply::DownloadError(
-                            format!("Download failed: {:?}", e).into(),
-                        ))
+                        .send(Reply::DownloadError(format!("Download failed: {:?}", e)))
                         .expect(ERROR);
                     ctx.request_repaint();
                 }
