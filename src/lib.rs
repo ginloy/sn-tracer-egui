@@ -12,16 +12,19 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 mod service;
 mod widgets {
     pub mod csv_table;
+    pub mod table;
 }
 
 use widgets::csv_table::CsvTable;
 
-const HEADERS: [&str; 4] = [
+const NUM_HEADERS: usize = 4;
+const HEADERS: [&str; NUM_HEADERS] = [
     "Barcode",
     "Serial Number (HEX)",
     "Serial Number (DEC)",
     "Manufacture Date",
 ];
+const BARCODE_IDX: usize = 0;
 
 const DEFAULT_SAVE_FILE: &str = "record.csv";
 
