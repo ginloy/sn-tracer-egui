@@ -3,7 +3,6 @@
     windows_subsystem = "windows"
 )]
 use clap::Parser;
-use log::*;
 use std::time::Instant;
 use sysinfo::{System, SystemExt};
 use tracing::*;
@@ -39,7 +38,7 @@ fn main() {
             events.push((s, Instant::now()));
         }
         (Some(s), Some((_, last_t)))
-            if last_t.elapsed().as_micros() < DELAY_MILLIS && s == *"\r" =>
+            if last_t.elapsed().as_millis() < DELAY_MILLIS && s == *"\r" =>
         {
             let res = events.iter().map(|(s, _)| s).cloned().collect::<String>();
             trace!("{}", last_t.elapsed().as_millis());
