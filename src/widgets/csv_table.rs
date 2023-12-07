@@ -58,16 +58,19 @@ impl<'a> CsvTable<'a> {
         let num_cols = self.num_cols();
         let row_height = ui.text_style_height(&TextStyle::Body);
         let data = self.get_matrix();
+        let mean_width = ui.available_width() / num_cols as f32;
+        let width_range = Rangef::new(0.75 * mean_width, 1.25 * mean_width);
         TableBuilder::new(ui)
             .striped(true)
-            // .resizable(true)
-            .columns(Column::remainder(), num_cols)
+            .resizable(true)
+            .columns(Column::auto().range(width_range), num_cols - 1)
+            .column(Column::remainder().at_least(width_range.min))
             .stick_to_bottom(true)
             .header(1.2 * row_height, |mut header| {
                 let headers = &data[0];
                 headers.iter().for_each(|s| {
                     header.col(|ui| {
-                        let response = ui.add(Label::new(RichText::new(s).strong()).wrap(true));
+                        let response = ui.add(Label::new(RichText::new(s).strong()).wrap(false));
                         let mut temp = None;
                         std::mem::swap(&mut res, &mut temp);
                         res = Some(union_response(temp, response));
@@ -79,7 +82,7 @@ impl<'a> CsvTable<'a> {
                     body.row(row_height, |mut row| {
                         data[i].iter().for_each(|s| {
                             row.col(|ui| {
-                                let response = ui.add(Label::new(RichText::new(s)).wrap(true));
+                                let response = ui.add(Label::new(RichText::new(s)).wrap(false));
                                 let mut temp = None;
                                 std::mem::swap(&mut res, &mut temp);
                                 res = Some(union_response(temp, response));
