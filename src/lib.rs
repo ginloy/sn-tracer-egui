@@ -90,6 +90,20 @@ enum ConnectionStatus {
     Disconnected,
 }
 
+fn ask_confirmation(msg: &str) -> bool {
+    match MessageDialog::new()
+        .set_level(MessageLevel::Warning)
+        .set_title("Warning")
+        .set_description(msg)
+        .set_buttons(MessageButtons::OkCancel)
+        .show()
+    {
+        MessageDialogResult::Ok => true,
+        MessageDialogResult::Cancel => false,
+        _ => false,
+    }
+}
+
 impl App {
     // fn configure_text_styles(ctx: &egui::Context) {
     //     use FontFamily::Proportional;
@@ -143,13 +157,17 @@ impl App {
     fn update_non_ui(&mut self) {
         match &self.connection_status {
             ConnectionStatus::Disconnected => {
-                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
+                if self.previous_connection_request.elapsed()
+                    > std::time::Duration::from_millis(200)
+                {
                     self.previous_connection_request = Instant::now();
                     self.send_channel.send(Command::Connect).unwrap();
                 }
             }
             ConnectionStatus::Connected(_) => {
-                if self.previous_connection_request.elapsed() > std::time::Duration::from_millis(200) {
+                if self.previous_connection_request.elapsed()
+                    > std::time::Duration::from_millis(200)
+                {
                     self.previous_connection_request = Instant::now();
                     self.send_channel.send(Command::CheckConnection).unwrap();
                 }
@@ -259,7 +277,9 @@ impl eframe::App for App {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let clear_button =
                             Button::new(RichText::new("Clear").heading()).fill(Color32::RED);
-                        if ui.add(clear_button).clicked() {
+                        if ui.add(clear_button).clicked()
+                            && ask_confirmation("Are you sure you want to clear all data?")
+                        {
                             self.barcode_input.clear();
                             self.device_output.clear();
                         };
