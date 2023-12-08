@@ -1,7 +1,6 @@
 use eframe::egui;
 use egui::*;
 use egui_extras::*;
-use tracing::*;
 
 pub struct CustomTable<'a> {
     headers: &'a [&'a str],
@@ -29,14 +28,17 @@ impl<'a> CustomTable<'a> {
     }
 
     fn header(&self, mut header: TableRow, response: &mut Response) {
-        (0..self.num_cols()).map(|i| {
-            header.col(|ui| {
-                self.header_cell(ui, i);
-            }).1
-        })
-        .for_each(|r| {
-            *response = response.union(r);
-        })
+        (0..self.num_cols())
+            .map(|i| {
+                header
+                    .col(|ui| {
+                        self.header_cell(ui, i);
+                    })
+                    .1
+            })
+            .for_each(|r| {
+                *response = response.union(r);
+            })
     }
 
     fn body_cell(&self, ui: &mut Ui, row_idx: usize, col_idx: usize) -> Response {
@@ -52,14 +54,16 @@ impl<'a> CustomTable<'a> {
     }
 
     fn body_row(&self, mut row: TableRow, row_idx: usize, response: &mut Response) {
-        (0..self.num_cols()).map(|i| {
-            row.col(|ui| {
-                self.body_cell(ui, row_idx, i);
-            }).1
-        })
-        .for_each(|r| {
-            *response = response.union(r);
-        })
+        (0..self.num_cols())
+            .map(|i| {
+                row.col(|ui| {
+                    self.body_cell(ui, row_idx, i);
+                })
+                .1
+            })
+            .for_each(|r| {
+                *response = response.union(r);
+            })
     }
 
     fn body(&self, body: TableBody, response: &mut Response, row_height: f32) {
@@ -81,7 +85,7 @@ impl<'a> CustomTable<'a> {
             .column(Column::remainder().at_least(width_range.min))
             .stick_to_bottom(true)
             .header(1.2 * row_height, |header| {
-               self.header(header, &mut res);
+                self.header(header, &mut res);
             })
             .body(|body| {
                 self.body(body, &mut res, row_height);

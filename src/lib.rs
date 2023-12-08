@@ -15,7 +15,7 @@ mod widgets {
     pub mod table;
 }
 
-use widgets::{csv_table::CsvTable, table::CustomTable};
+use widgets::table::CustomTable;
 
 const NUM_HEADERS: usize = 4;
 const HEADERS: [&str; NUM_HEADERS] = [
@@ -181,11 +181,15 @@ impl App {
     fn get_csv(&self) -> String {
         let body_rows = self.data.iter().map(Vec::len).max().unwrap_or(0);
         let mut data = self.data.iter().map(|v| v.iter()).collect::<Vec<_>>();
-        HEADERS.iter().join(",") + "\n" + &(0..body_rows).map(|_| {
-            data.iter_mut()
-                .map(|it| it.next().cloned().unwrap_or_default())
-                .join(",")  
-        }).join("\n")
+        HEADERS.iter().join(",")
+            + "\n"
+            + &(0..body_rows)
+                .map(|_| {
+                    data.iter_mut()
+                        .map(|it| it.next().cloned().unwrap_or_default())
+                        .join(",")
+                })
+                .join("\n")
     }
 
     fn show_download_error_dialog(&self, msg: &str) {
@@ -219,9 +223,7 @@ impl App {
                 self.download_path = Some(path.clone());
                 debug!("Path set to {:?}, starting download", self.download_path);
                 self.send_channel
-                    .send(Command::Download(path,
-                            self.get_csv()
-                    ))
+                    .send(Command::Download(path, self.get_csv()))
                     .expect("Thread died");
             }
         }
@@ -232,10 +234,11 @@ impl App {
             debug!("Received event: {:?}", event);
             match event {
                 Reply::Read(s) => {
-                    let mut fields = s.split(",");
-                    self.data.iter_mut().skip(1).for_each(|v| {
-                        v.push(fields.next().unwrap_or_default().into())
-                    })
+                    let mut fields = s.split(',');
+                    self.data
+                        .iter_mut()
+                        .skip(1)
+                        .for_each(|v| v.push(fields.next().unwrap_or_default().into()))
                 }
                 Reply::Connected(d) => {
                     self.connection_status = ConnectionStatus::Connected(d);

@@ -2,7 +2,6 @@ use std::{path::PathBuf, process::Stdio};
 
 use anyhow::{bail, Context, Result};
 use eframe::egui;
-use itertools::Itertools;
 use log::*;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -10,8 +9,6 @@ use tokio::{
     time::{interval, timeout, Duration},
 };
 use tokio_serial::{SerialPort, SerialStream};
-
-use crate::HEADERS;
 
 const ERROR: &str = "Channel closed";
 const TIMEOUT_MS: u64 = 1000;
@@ -259,7 +256,7 @@ pub async fn start_service(
                 };
                 ctx.request_repaint();
             }
-            Some(Command::Download(path, data )) => {
+            Some(Command::Download(path, data)) => {
                 debug!("Download to {:?}", path);
                 if let Err(e) = std::fs::write(path, data.as_bytes()) {
                     send_channel
