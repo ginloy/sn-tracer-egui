@@ -11,7 +11,6 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 mod service;
 mod widgets {
-    pub mod csv_table;
     pub mod table;
 }
 
