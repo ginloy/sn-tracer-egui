@@ -32,7 +32,7 @@ fn get_scanner_path() -> Result<PathBuf> {
 pub enum Command {
     Connect,
     Read,
-    Download(PathBuf, Vec<String>, Vec<String>),
+    Download(PathBuf, String),
     StopScanner,
     StartScanner,
     CheckConnection,
@@ -259,22 +259,8 @@ pub async fn start_service(
                 };
                 ctx.request_repaint();
             }
-            Some(Command::Download(path, barcode, device)) => {
+            Some(Command::Download(path, data )) => {
                 debug!("Download to {:?}", path);
-                let mut data = HEADERS.join(",");
-                data.push('\n');
-                let rows = barcode.len().max(device.len());
-                data.push_str(
-                    &(0..rows)
-                        .map(|i| {
-                            format!(
-                                "{},{}",
-                                barcode.get(i).unwrap_or(&"".to_string()),
-                                device.get(i).unwrap_or(&"".to_string())
-                            )
-                        })
-                        .join("\n"),
-                );
                 if let Err(e) = std::fs::write(path, data.as_bytes()) {
                     send_channel
                         .send(Reply::DownloadError(format!("Download failed: {:?}", e)))

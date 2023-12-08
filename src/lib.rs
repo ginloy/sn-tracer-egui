@@ -15,7 +15,7 @@ mod widgets {
     pub mod table;
 }
 
-use widgets::csv_table::CsvTable;
+use widgets::{csv_table::CsvTable, table::CustomTable};
 
 const NUM_HEADERS: usize = 4;
 const HEADERS: [&str; NUM_HEADERS] = [
@@ -24,14 +24,12 @@ const HEADERS: [&str; NUM_HEADERS] = [
     "Serial Number (DEC)",
     "Manufacture Date",
 ];
-const BARCODE_IDX: usize = 0;
 
 const DEFAULT_SAVE_FILE: &str = "record.csv";
 
 pub struct App {
-    barcode_input: Vec<String>,
+    data: [Vec<String>; NUM_HEADERS],
     text: String,
-    device_output: Vec<String>,
     receive_channel: UnboundedReceiver<Reply>,
     send_channel: UnboundedSender<Command>,
     keypress_buffer: Vec<(SystemTime, String)>,
@@ -45,9 +43,8 @@ pub struct App {
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)]
 struct AppStorage {
-    barcode_input: Vec<String>,
+    data: [Vec<String>; NUM_HEADERS],
     text: String,
-    device_output: Vec<String>,
     keypress_buffer: Vec<(SystemTime, String)>,
     download_path: Option<PathBuf>,
 
@@ -60,11 +57,10 @@ fn default_keyboard() -> bool {
 }
 
 impl AppStorage {
-    fn from(app: &App) -> Self {
+    fn new(app: &App) -> Self {
         Self {
-            barcode_input: app.barcode_input.clone(),
+            data: app.data.clone(),
             text: app.text.clone(),
-            device_output: app.device_output.clone(),
             keypress_buffer: app.keypress_buffer.clone(),
             download_path: app.download_path.clone(),
             keyboard: app.keyboard,
@@ -77,9 +73,8 @@ impl AppStorage {
         send_channel: UnboundedSender<Command>,
     ) -> App {
         App {
-            barcode_input: self.barcode_input,
+            data: self.data,
             text: self.text,
-            device_output: self.device_output,
             receive_channel,
             send_channel,
             keypress_buffer: self.keypress_buffer,
@@ -147,9 +142,8 @@ impl App {
                 app_storage.into(receive_channel_2, send_channel_1)
             }
             _ => Self {
-                barcode_input: Vec::new(),
+                data: Default::default(),
                 text: String::new(),
-                device_output: Vec::new(),
                 receive_channel: receive_channel_2,
                 send_channel: send_channel_1,
                 keypress_buffer: Vec::new(),
@@ -185,17 +179,13 @@ impl App {
     }
 
     fn get_csv(&self) -> String {
-        let rows = std::cmp::max(self.barcode_input.len(), self.device_output.len());
-        let mut barcodes = self.barcode_input.iter().map(String::as_str);
-        let mut device_output = self.device_output.iter().map(String::as_str);
-        let body = (0..rows)
-            .map(|_| {
-                let barcode = barcodes.next().unwrap_or("");
-                let device_output = device_output.next().unwrap_or("");
-                format!("{},{}", barcode, device_output)
-            })
-            .join("\n");
-        HEADERS.join(",") + "\n" + &body
+        let body_rows = self.data.iter().map(Vec::len).max().unwrap_or(0);
+        let mut data = self.data.iter().map(|v| v.iter()).collect::<Vec<_>>();
+        HEADERS.iter().join(",") + "\n" + &(0..body_rows).map(|_| {
+            data.iter_mut()
+                .map(|it| it.next().cloned().unwrap_or_default())
+                .join(",")  
+        }).join("\n")
     }
 
     fn show_download_error_dialog(&self, msg: &str) {
@@ -229,10 +219,8 @@ impl App {
                 self.download_path = Some(path.clone());
                 debug!("Path set to {:?}, starting download", self.download_path);
                 self.send_channel
-                    .send(Command::Download(
-                        self.download_path.as_ref().unwrap().to_owned(),
-                        self.barcode_input.clone(),
-                        self.device_output.clone(),
+                    .send(Command::Download(path,
+                            self.get_csv()
                     ))
                     .expect("Thread died");
             }
@@ -244,7 +232,10 @@ impl App {
             debug!("Received event: {:?}", event);
             match event {
                 Reply::Read(s) => {
-                    self.device_output.push(s.trim().into());
+                    let mut fields = s.split(",");
+                    self.data.iter_mut().skip(1).for_each(|v| {
+                        v.push(fields.next().unwrap_or_default().into())
+                    })
                 }
                 Reply::Connected(d) => {
                     self.connection_status = ConnectionStatus::Connected(d);
@@ -257,14 +248,14 @@ impl App {
                 }
                 Reply::ReadError(s) => {
                     debug!("Read error: {}", s);
-                    self.device_output.push(s.trim().into());
+                    self.data[1].push(s.trim().into());
                 }
                 Reply::DownloadError(e) => {
                     debug!("Download error: {}", e);
                     self.show_download_error_dialog(&e);
                 }
                 Reply::BarcodeOutput(s) => {
-                    self.barcode_input.push(s);
+                    self.data[0].push(s);
                     self.send_channel.send(Command::Read).expect("Thread died");
                 }
                 Reply::ScannerStartFail => {
@@ -277,7 +268,7 @@ impl App {
 
 impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, &AppStorage::from(self));
+        eframe::set_value(storage, eframe::APP_KEY, &AppStorage::new(self));
     }
 
     fn auto_save_interval(&self) -> Duration {
@@ -302,8 +293,7 @@ impl eframe::App for App {
                         if ui.add(clear_button).clicked()
                             && ask_confirmation("Are you sure you want to clear all data?")
                         {
-                            self.barcode_input.clear();
-                            self.device_output.clear();
+                            self.data.iter_mut().for_each(Vec::clear);
                         };
                         let download_bytton =
                             Button::new(RichText::new("Download").heading()).rounding(5.0);
@@ -353,7 +343,7 @@ impl eframe::App for App {
                     if input_box.ctx.input(|i| i.key_pressed(egui::Key::Enter))
                         && !self.text.trim().is_empty()
                     {
-                        self.barcode_input.push(self.text.clone());
+                        self.data[0].push(self.text.clone());
                         self.send_channel.send(Command::Read).expect("Thread died");
                         self.text.clear();
                         input_box.request_focus();
@@ -361,7 +351,7 @@ impl eframe::App for App {
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(CsvTable::new(&self.get_csv()).expect("This should not happen"));
+            ui.add(CustomTable::new(&HEADERS, &self.data));
         });
     }
 }
