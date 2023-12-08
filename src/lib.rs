@@ -191,6 +191,11 @@ impl App {
                 })
                 .join("\n")
     }
+    
+    fn add_data(&mut self, s: String) {
+        let mut split = s.split(',');
+        self.data.iter_mut().skip(1).for_each(|v| v.push(split.next().unwrap_or("-").into()))
+    }
 
     fn show_download_error_dialog(&self, msg: &str) {
         MessageDialog::new()
@@ -234,11 +239,7 @@ impl App {
             debug!("Received event: {:?}", event);
             match event {
                 Reply::Read(s) => {
-                    let mut fields = s.split(',');
-                    self.data
-                        .iter_mut()
-                        .skip(1)
-                        .for_each(|v| v.push(fields.next().unwrap_or_default().into()))
+                    self.add_data(s);
                 }
                 Reply::Connected(d) => {
                     self.connection_status = ConnectionStatus::Connected(d);
@@ -251,7 +252,7 @@ impl App {
                 }
                 Reply::ReadError(s) => {
                     debug!("Read error: {}", s);
-                    self.data[1].push(s.trim().into());
+                    self.add_data(s);
                 }
                 Reply::DownloadError(e) => {
                     debug!("Download error: {}", e);
